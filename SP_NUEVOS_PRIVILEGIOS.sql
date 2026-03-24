@@ -2,7 +2,7 @@
 -- Objetivo: centralizar en SP la lectura/guardado de privilegios de menu por rol.
 -- Tablas usadas:
 --   dbo.tbl_Rol
---   dbo.tbl_Tabla_Menu
+--   dbo.tbl_tablamenu
 --   dbo.tbl_RolMenu
 
 IF OBJECT_ID('dbo.spx_ObtenerPrivilegiosRoles', 'P') IS NULL
@@ -63,21 +63,21 @@ BEGIN
         RETURN;
     END
 
-    SELECT m.ID_MENU AS Id_Menu,
-           m.NOMBRE AS Nombre,
-           m.NIVEL AS Nivel,
-           m.PADRE AS Padre,
+    SELECT m.Id AS Id_Menu,
+           m.nombre AS Nombre,
+           m.[orden] AS Nivel,
+           m.padre AS Padre,
            CASE
-               WHEN rm.Id_RolMenu IS NULL THEN CAST(0 AS bit)
-               ELSE CAST(1 AS bit)
+                WHEN rm.Id_RolMenu IS NULL THEN CAST(0 AS bit)
+                ELSE CAST(1 AS bit)
            END AS Asignado
-    FROM dbo.tbl_Tabla_Menu m
+    FROM dbo.tbl_tablamenu m
     LEFT JOIN dbo.tbl_RolMenu rm
-           ON rm.Id_Menu = m.ID_MENU
+           ON rm.Id_Menu = m.Id
           AND rm.Id_Rol = @IdRol
           AND ISNULL(rm.E_Eliminado, 0) = 0
-    WHERE ISNULL(m.E_Eliminado, 0) = 0
-    ORDER BY m.PADRE, m.NIVEL, m.ID_MENU;
+    WHERE ISNULL(m.e_eliminado, 0) = 0
+    ORDER BY m.padre, m.[orden], m.Id;
 END
 GO
 
@@ -157,10 +157,10 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM @MenuIds i
-        LEFT JOIN dbo.tbl_Tabla_Menu m
-               ON m.ID_MENU = i.Id_Menu
-              AND ISNULL(m.E_Eliminado, 0) = 0
-        WHERE m.ID_MENU IS NULL
+        LEFT JOIN dbo.tbl_tablamenu m
+               ON m.Id = i.Id_Menu
+              AND ISNULL(m.e_eliminado, 0) = 0
+        WHERE m.Id IS NULL
     )
     BEGIN
         RAISERROR('MenuIds contiene elementos inexistentes o inactivos.', 16, 1);

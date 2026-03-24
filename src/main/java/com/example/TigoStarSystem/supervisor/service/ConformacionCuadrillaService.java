@@ -7,8 +7,12 @@ import com.example.TigoStarSystem.supervisor.repository.ConformacionCuadrillaRep
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -147,7 +151,8 @@ public class ConformacionCuadrillaService {
             Integer limit) {
         LocalDate fechaConsulta = resolverFecha(fecha);
         List<Map<String, Object>> catalogo = repository.listarGruposFiltroEdicion(sucursal);
-        List<Map<String, Object>> confirmadas = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> confirmadas = repository.listarConEliminados(fechaConsulta, sucursal, null, null);
+        Map<Integer, Map<String, Object>> historicoByTecnico = indexUltimaConfirmacionPorTecnico(fechaConsulta, sucursal);
         Map<Integer, Map<String, Object>> tecnicosById = rowMapper.indexTecnicosById(repository.listarTecnicos(sucursal));
 
         Set<String> clavesConfirmadas = obtenerClavesConfirmadas(confirmadas);
@@ -158,7 +163,22 @@ public class ConformacionCuadrillaService {
             if (key == null || clavesConfirmadas.contains(key)) {
                 continue;
             }
-            pendientes.add(rowMapper.mapPendiente(row, sucursal, fechaConsulta, tecnicosById));
+            Map<String, Object> pendiente = rowMapper.mapPendiente(row, sucursal, fechaConsulta, tecnicosById);
+            Integer idTecnico = valueAsInteger(getCaseInsensitive(
+                    pendiente,
+                    "idTecnico",
+                    "id_tecnico",
+                    "idtecnico",
+                    "id_vendedor",
+                    "idvendedor"
+            ));
+            if (idTecnico != null) {
+                Map<String, Object> historico = historicoByTecnico.get(idTecnico);
+                if (historico != null) {
+                    aplicarSugerenciasDesdeHistorico(pendiente, historico);
+                }
+            }
+            pendientes.add(pendiente);
         }
 
         return rowMapper.filtrarPorTextoYLimite(
@@ -227,7 +247,7 @@ public class ConformacionCuadrillaService {
             Integer limit,
             boolean eliminadas) {
         LocalDate fechaConsulta = resolverFecha(fecha);
-        List<Map<String, Object>> rows = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> rows = repository.listarConEliminados(fechaConsulta, sucursal, null, null);
         List<Map<String, Object>> out = new ArrayList<>();
 
         for (Map<String, Object> row : rows) {
@@ -278,6 +298,186 @@ public class ConformacionCuadrillaService {
                 repository.listarGruposFiltroEdicion(sucursal),
                 filas
         );
+    }
+
+    private Map<Integer, Map<String, Object>> indexUltimaConfirmacionPorTecnico(LocalDate fechaConsulta, String sucursal) {
+        Map<Integer, Map<String, Object>> exactAyer = new HashMap<>();
+        Map<Integer, Map<String, Object>> previas = new HashMap<>();
+        if (fechaConsulta == null) {
+            return previas;
+        }
+
+        LocalDate fechaAyer = fechaConsulta.minusDays(1);
+        List<Map<String, Object>> rows = repository.listarConEliminados(null, sucursal, null, null);
+        if (rows == null || rows.isEmpty()) {
+            return previas;
+        }
+
+        for (Map<String, Object> row : rows) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
+            LocalDate fechaRow = valueAsLocalDate(getCaseInsensitive(row, "fecha"));
+            if (fechaRow == null || !fechaRow.isBefore(fechaConsulta)) {
+                continue;
+            }
+
+            Integer idTecnico = valueAsInteger(getCaseInsensitive(
+                    row,
+                    "id_tecnico",
+                    "idtecnico",
+                    "idTecnico",
+                    "id_vendedor",
+                    "idvendedor"
+            ));
+            if (idTecnico == null) {
+                continue;
+            }
+
+            if (!previas.containsKey(idTecnico)) {
+                previas.put(idTecnico, row);
+            }
+            if (fechaRow.equals(fechaAyer) && !exactAyer.containsKey(idTecnico)) {
+                exactAyer.put(idTecnico, row);
+            }
+        }
+
+        previas.putAll(exactAyer);
+        return previas;
+    }
+
+    private void aplicarSugerenciasDesdeHistorico(Map<String, Object> pendiente, Map<String, Object> historico) {
+        if (pendiente == null || pendiente.isEmpty() || historico == null || historico.isEmpty()) {
+            return;
+        }
+
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "id_tecnicoAuxiliar", "idtecnicoauxiliar", "id_tecnico_auxiliar"),
+                "idTecnicoAuxiliar",
+                "id_tecnicoAuxiliar",
+                "id_tecnico_auxiliar",
+                "idtecnicoauxiliar"
+        );
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "auxiliar", "tecnicoauxiliar", "nombreauxiliar"),
+                "auxiliar"
+        );
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "idUsuarioDigitador", "id_usuario_digitador", "idusuariodigitador"),
+                "idUsuarioDigitador",
+                "id_usuario_digitador",
+                "idusuariodigitador"
+        );
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "digitador", "nombredigitador", "usuarioDigitador"),
+                "digitador"
+        );
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "idUsuarioSupervisor", "id_usuario_supervisor", "idusuariosupervisor", "idsupervisor"),
+                "idUsuarioSupervisor",
+                "id_usuario_supervisor",
+                "idusuariosupervisor"
+        );
+        setIfBlankWithAliases(
+                pendiente,
+                getCaseInsensitive(historico, "supervisorACargo", "supervisor_a_cargo", "supervisor", "nombresupervisor"),
+                "supervisorACargo",
+                "supervisor_a_cargo",
+                "supervisor"
+        );
+
+        Object vehiculoHistorico = getCaseInsensitive(historico, "vehiculo", "Vehiculo", "placa", "placavehiculo", "placaVehiculo");
+        if (isBlankValue(getCaseInsensitive(pendiente, "vehiculo", "Vehiculo")) && !isBlankValue(vehiculoHistorico)) {
+            pendiente.put("vehiculo", vehiculoHistorico);
+            pendiente.put("Vehiculo", vehiculoHistorico);
+        }
+    }
+
+    private void setIfBlankWithAliases(Map<String, Object> target, Object value, String... aliases) {
+        if (target == null || aliases == null || aliases.length == 0 || isBlankValue(value)) {
+            return;
+        }
+        Object current = getCaseInsensitive(target, aliases);
+        if (!isBlankValue(current)) {
+            return;
+        }
+        for (String alias : aliases) {
+            target.put(alias, value);
+        }
+    }
+
+    private Object getCaseInsensitive(Map<String, Object> row, String... keys) {
+        if (row == null || row.isEmpty() || keys == null || keys.length == 0) {
+            return null;
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String current = normalizeKey(entry.getKey());
+            for (String key : keys) {
+                if (current.equals(normalizeKey(key))) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private String normalizeKey(String key) {
+        if (key == null) {
+            return "";
+        }
+        return key.replace("_", "").trim().toLowerCase();
+    }
+
+    private Integer valueAsInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private LocalDate valueAsLocalDate(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDate) {
+            return (LocalDate) value;
+        }
+        if (value instanceof Date) {
+            return ((Date) value).toLocalDate();
+        }
+        if (value instanceof Timestamp) {
+            return ((Timestamp) value).toLocalDateTime().toLocalDate();
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).toLocalDate();
+        }
+        try {
+            return LocalDate.parse(String.valueOf(value).trim());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private boolean isBlankValue(Object value) {
+        if (value == null) {
+            return true;
+        }
+        if (value instanceof String) {
+            return ((String) value).trim().isEmpty();
+        }
+        return false;
     }
 
     private void validarRequestCreacion(ConformacionCuadrillaCreateRequest request) {

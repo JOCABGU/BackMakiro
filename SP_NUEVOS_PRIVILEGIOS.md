@@ -33,7 +33,7 @@ Salida:
 - `Asignado` (bit)
 
 Tablas usadas:
-- `tbl_Tabla_Menu`
+- `tbl_tablamenu`
 - `tbl_RolMenu`
 - `tbl_Rol`
 
@@ -59,7 +59,7 @@ Salida:
 
 Tablas usadas:
 - `tbl_Rol`
-- `tbl_Tabla_Menu`
+- `tbl_tablamenu`
 - `tbl_RolMenu`
 
 Notas:

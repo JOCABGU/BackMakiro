@@ -32,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AuthService {
+    private static final int ROL_ID_SISTEMAS = 4;
     private static final Duration SESSION_TTL = Duration.ofHours(8);
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
     private final AuthRepository authRepository;
@@ -211,17 +212,8 @@ public class AuthService {
         if (usuario == null) {
             return false;
         }
-        if (usuario.getIdRol() != null && usuario.getIdRol() == 4) {
-            return true;
-        }
-        String rol = usuario.getRol();
-        if (rol == null || rol.trim().isEmpty()) {
-            return false;
-        }
-        String normalized = normalizeText(rol);
-        return normalized.contains("admin")
-                || normalized.equals("sistemas")
-                || normalized.contains("sistema");
+        Integer idRol = usuario.getIdRol();
+        return idRol != null && idRol == ROL_ID_SISTEMAS;
     }
 
     private AuthLoginResponse mapToResponse(Map<String, Object> row, Integer idSucursalFallback) {
