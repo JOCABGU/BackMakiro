@@ -14,9 +14,14 @@ public class CuNoRealizadoRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+
+
     public List<Map<String, Object>> listar() {
         return jdbcTemplate.queryForList("EXEC spx_ObtenerCargoUsuarioNoRealizado_Listado");
     }
+
+
+
 
     public List<Map<String, Object>> obtenerPorId(Long codigo) {
         return jdbcTemplate.queryForList(
@@ -24,6 +29,9 @@ public class CuNoRealizadoRepository {
                 codigo
         );
     }
+    
+
+    
 
     public int registrarPlaceholder(Map<String, Object> datos) {
         // TODO: Falta el SP para registrar Cargo Usuario No Realizado.

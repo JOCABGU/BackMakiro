@@ -77,6 +77,9 @@ final class OtDbSupport {
         return new JdbcTemplate(dataSource);
     }
 
+
+
+
     private boolean isSucreSucursal(Integer idSucursal) {
         List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
         if (rows == null || rows.isEmpty()) {
@@ -105,6 +108,8 @@ final class OtDbSupport {
         return null;
     }
 
+
+    
     private Integer asInteger(Object value) {
         if (value == null) {
             return null;

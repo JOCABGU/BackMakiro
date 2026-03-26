@@ -11,11 +11,15 @@ import java.util.Map;
 
 @Repository
 public class AuthRepository {
+
+
     private final JdbcTemplate jdbcTemplate;
 
     public AuthRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
+
+
 
     public List<Map<String, Object>> validarUsuario(JdbcTemplate template, String usuario, String passwordHash) {
         if (template == null) {
@@ -39,6 +43,9 @@ public class AuthRepository {
         }
     }
 
+
+
+// Similar a validarUsuario, pero incluye el idSucursal para validación adicional.
     public List<Map<String, Object>> validarUsuarioSucursal(
             JdbcTemplate template,
             String usuario,
@@ -68,6 +75,9 @@ public class AuthRepository {
         }
     }
 
+
+
+//chequea si hay un error de procedimiento almacenado no encontrado, para evitar fallar si el SP tiene un nombre diferente (con o sin prefijo dbo.)
     private boolean isMissingStoredProcedure(DataAccessException ex) {
         Throwable root = ex;
         while (root.getCause() != null) {

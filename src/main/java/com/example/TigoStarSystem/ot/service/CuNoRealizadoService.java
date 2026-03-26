@@ -14,14 +14,23 @@ import java.util.Map;
 public class CuNoRealizadoService {
     private final CuNoRealizadoRepository repository;
 
+    /**
+     * Inicializa el servicio de Cargo Usuario No Realizado.
+     */
     public CuNoRealizadoService(CuNoRealizadoRepository repository) {
         this.repository = repository;
     }
 
+    /**
+     * Lista registros de CU no realizado.
+     */
     public List<Map<String, Object>> listar() {
         return repository.listar();
     }
 
+    /**
+     * Obtiene un registro por id y valida existencia.
+     */
     public Map<String, Object> obtenerPorId(Long id) {
         List<Map<String, Object>> rows = repository.obtenerPorId(id);
         if (rows.isEmpty()) {
@@ -30,6 +39,9 @@ public class CuNoRealizadoService {
         return rows.get(0);
     }
 
+    /**
+     * Registra CU no realizado; actualmente retorna error si falta SP definitivo.
+     */
     public void registrar(CuNoRealizadoCreateRequest request) {
         try {
             repository.registrarPlaceholder(request.getDatos());

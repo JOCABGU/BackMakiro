@@ -18,6 +18,9 @@ final class ConformacionCuadrillaRequestValidator {
     private static final Set<String> ACTIVIDADES_VALIDAS =
             new HashSet<>(Arrays.asList("TITULAR", "BACKUP"));
 
+    /**
+     * Valida y normaliza una fila proveniente del flujo backoffice.
+     */
     void validarBackoffice(ConformacionCuadrillaRowRequest fila) {
         if (fila == null) {
             throw validationError("Fila requerida.");
@@ -39,6 +42,9 @@ final class ConformacionCuadrillaRequestValidator {
         validarEstado(fila.getEstado());
     }
 
+    /**
+     * Valida y normaliza un request del flujo web.
+     */
     void validarWeb(ConformacionCuadrillaWebRequest fila) {
         if (fila == null) {
             throw validationError("Request requerido.");
@@ -59,6 +65,9 @@ final class ConformacionCuadrillaRequestValidator {
         validarTecnicosDistintos(fila.getIdTecnico(), fila.getIdTecnicoAuxiliar());
     }
 
+    /**
+     * Normaliza campos de texto y estado del request web.
+     */
     private void normalizarWeb(ConformacionCuadrillaWebRequest fila) {
         fila.setEstado(normalizarEstado(fila.getEstado()));
         fila.setActividad(toUpperTrimOrNull(fila.getActividad()));
@@ -77,36 +86,54 @@ final class ConformacionCuadrillaRequestValidator {
         fila.setObservacion(trimToNull(fila.getObservacion()));
     }
 
+    /**
+     * Lanza error si hay campos requeridos faltantes.
+     */
     private void validarFaltantes(List<String> faltantes) {
         if (!faltantes.isEmpty()) {
             throw validationError("Faltan campos requeridos: " + String.join(", ", faltantes));
         }
     }
 
+    /**
+     * Verifica que el estado este dentro de los permitidos.
+     */
     private void validarEstado(String estado) {
         if (!ESTADOS_VALIDOS.contains(estado)) {
             throw validationError("estado invalido. Valores permitidos: ACTIVO, AUSENTE.");
         }
     }
 
+    /**
+     * Verifica que la actividad este dentro de los valores validos.
+     */
     private void validarActividad(String actividad) {
         if (!ACTIVIDADES_VALIDAS.contains(actividad)) {
             throw validationError("actividad invalida. Valores permitidos: TITULAR, BACKUP.");
         }
     }
 
+    /**
+     * Evita que tecnico titular y auxiliar sean el mismo.
+     */
     private void validarTecnicosDistintos(Integer idTecnico, Integer idTecnicoAuxiliar) {
         if (idTecnicoAuxiliar != null && idTecnicoAuxiliar.equals(idTecnico)) {
             throw validationError("idTecnicoAuxiliar no puede ser igual a idTecnico.");
         }
     }
 
+    /**
+     * Agrega nombre de campo faltante cuando se cumple la condicion.
+     */
     private void agregarSiFalta(List<String> faltantes, boolean condicion, String campo) {
         if (condicion) {
             faltantes.add(campo);
         }
     }
 
+    /**
+     * Construye una ApiException uniforme de validacion.
+     */
     private ApiException validationError(String message) {
         return new ApiException(
                 HttpStatus.BAD_REQUEST,
@@ -115,6 +142,9 @@ final class ConformacionCuadrillaRequestValidator {
         );
     }
 
+    /**
+     * Normaliza estado y convierte INACTIVO a AUSENTE.
+     */
     private String normalizarEstado(String value) {
         String normalized = toUpperTrimOrNull(value);
         if ("INACTIVO".equals(normalized)) {
@@ -123,6 +153,9 @@ final class ConformacionCuadrillaRequestValidator {
         return normalized;
     }
 
+    /**
+     * Retorna null para texto vacio y trim para texto con contenido.
+     */
     private String trimToNull(String value) {
         if (value == null) {
             return null;
@@ -134,6 +167,9 @@ final class ConformacionCuadrillaRequestValidator {
         return trimmed;
     }
 
+    /**
+     * Convierte texto a mayusculas devolviendo null si esta vacio.
+     */
     private String toUpperTrimOrNull(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -142,6 +178,9 @@ final class ConformacionCuadrillaRequestValidator {
         return trimmed.toUpperCase(Locale.ROOT);
     }
 
+    /**
+     * Indica si un texto es nulo o vacio.
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

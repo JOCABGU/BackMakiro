@@ -76,49 +76,7 @@ public class ConformacionCuadrillaRepository {
      * Lista registros activos por fecha/sucursal con fallback entre fuentes.
      */
     public List<Map<String, Object>> listar(LocalDate fecha, String sucursal, Integer limite, Integer idTecnico) {
-        Object fechaParam = fecha == null ? null : Date.valueOf(fecha);
-        String sucursalParam = normalizarSucursal(sucursal);
-        String sucursalFiltro = resolverSucursalNombreParaConsulta(sucursalParam);
-        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
-        Set<String> filtrosConsulta = dbSupport.construirFiltrosConsulta(sucursalFiltro, dbInfo);
-
-        // 1) Sucursal logueada (uTecnicos o SucrePrueba segun sucursal)
-        List<Map<String, Object>> rowsSucursal = listarEnSucursalSeleccionada(
-                sucursalFiltro,
-                fechaParam,
-                limite,
-                idTecnico,
-                dbInfo
-        );
-        if (rowsSucursal != null && !rowsSucursal.isEmpty()) {
-            return rowsSucursal;
-        }
-
-        // 2) BD operativa por defecto (uTecnicos)
-        for (String filtro : filtrosConsulta) {
-            try {
-                List<Map<String, Object>> rows = listarEnTemplate(jdbcTemplate, fechaParam, filtro, limite, idTecnico);
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (DataAccessException ex) {
-                // fallback final below
-            }
-        }
-
-        // 3) Central como ultimo fallback
-        try {
-            for (String filtro : filtrosConsulta) {
-                List<Map<String, Object>> rowsCentral =
-                        listarEnTemplate(centralJdbcTemplate, fechaParam, filtro, limite, idTecnico);
-                if (rowsCentral != null && !rowsCentral.isEmpty()) {
-                    return rowsCentral;
-                }
-            }
-        } catch (DataAccessException ex) {
-            // sin fallback adicional
-        }
-        return new ArrayList<>();
+        return listarConFallback(fecha, sucursal, limite, idTecnico, false);
     }
 
     /**
@@ -172,6 +130,18 @@ public class ConformacionCuadrillaRepository {
             String sucursal,
             Integer limite,
             Integer idTecnico) {
+        return listarConFallback(fecha, sucursal, limite, idTecnico, true);
+    }
+
+    /**
+     * Ejecuta listado con fallback entre sucursal seleccionada, operativa y central.
+     */
+    private List<Map<String, Object>> listarConFallback(
+            LocalDate fecha,
+            String sucursal,
+            Integer limite,
+            Integer idTecnico,
+            boolean incluirEliminados) {
         Object fechaParam = fecha == null ? null : Date.valueOf(fecha);
         String sucursalParam = normalizarSucursal(sucursal);
         String sucursalFiltro = resolverSucursalNombreParaConsulta(sucursalParam);
@@ -179,53 +149,40 @@ public class ConformacionCuadrillaRepository {
         Set<String> filtrosConsulta = dbSupport.construirFiltrosConsulta(sucursalFiltro, dbInfo);
 
         // 1) Sucursal logueada (uTecnicos o SucrePrueba segun sucursal)
-        List<Map<String, Object>> rowsSucursal = listarConEliminadosEnSucursalSeleccionada(
+        List<Map<String, Object>> rowsSucursal = listarEnSucursalSeleccionada(
                 sucursalFiltro,
                 fechaParam,
                 limite,
                 idTecnico,
-                dbInfo
+                dbInfo,
+                incluirEliminados
         );
-        if (rowsSucursal != null && !rowsSucursal.isEmpty()) {
+        if (tieneDatos(rowsSucursal)) {
             return rowsSucursal;
         }
 
         // 2) BD operativa por defecto (uTecnicos)
-        for (String filtro : filtrosConsulta) {
-            try {
-                List<Map<String, Object>> rows = listarConEliminadosEnTemplate(
-                        jdbcTemplate,
-                        fechaParam,
-                        filtro,
-                        limite,
-                        idTecnico
-                );
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (DataAccessException ex) {
-                // fallback final below
-            }
+        List<Map<String, Object>> rowsOperativa = listarEnTemplatesConFiltros(
+                jdbcTemplate,
+                filtrosConsulta,
+                fechaParam,
+                limite,
+                idTecnico,
+                incluirEliminados
+        );
+        if (tieneDatos(rowsOperativa)) {
+            return rowsOperativa;
         }
 
         // 3) Central como ultimo fallback
-        try {
-            for (String filtro : filtrosConsulta) {
-                List<Map<String, Object>> rowsCentral = listarConEliminadosEnTemplate(
-                        centralJdbcTemplate,
-                        fechaParam,
-                        filtro,
-                        limite,
-                        idTecnico
-                );
-                if (rowsCentral != null && !rowsCentral.isEmpty()) {
-                    return rowsCentral;
-                }
-            }
-        } catch (DataAccessException ex) {
-            // sin fallback adicional
-        }
-        return new ArrayList<>();
+        return listarEnTemplatesConFiltros(
+                centralJdbcTemplate,
+                filtrosConsulta,
+                fechaParam,
+                limite,
+                idTecnico,
+                incluirEliminados
+        );
     }
 
     /**
@@ -975,7 +932,8 @@ public class ConformacionCuadrillaRepository {
             Object fechaParam,
             Integer limite,
             Integer idTecnico,
-            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo) {
+            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
+            boolean incluirEliminados) {
         if (sucursalParam == null || sucursalParam.trim().isEmpty()) {
             return new ArrayList<>();
         }
@@ -984,16 +942,44 @@ public class ConformacionCuadrillaRepository {
         }
         JdbcTemplate sucursalTemplate = crearJdbcTemplateSucursal(dbInfo);
         Set<String> filtros = dbSupport.construirFiltrosConsulta(sucursalParam, dbInfo);
+        return listarEnTemplatesConFiltros(
+                sucursalTemplate,
+                filtros,
+                fechaParam,
+                limite,
+                idTecnico,
+                incluirEliminados
+        );
+    }
+
+    /**
+     * Recorre filtros de sucursal sobre un template y devuelve el primer resultado con datos.
+     */
+    private List<Map<String, Object>> listarEnTemplatesConFiltros(
+            JdbcTemplate template,
+            Set<String> filtros,
+            Object fechaParam,
+            Integer limite,
+            Integer idTecnico,
+            boolean incluirEliminados) {
+        if (template == null) {
+            return new ArrayList<>();
+        }
+        if (filtros == null || filtros.isEmpty()) {
+            return new ArrayList<>();
+        }
+
         try {
             for (String filtro : filtros) {
-                List<Map<String, Object>> rows = listarEnTemplate(
-                        sucursalTemplate,
+                List<Map<String, Object>> rows = listarEnTemplateSegunModo(
+                        template,
                         fechaParam,
                         filtro,
                         limite,
-                        idTecnico
+                        idTecnico,
+                        incluirEliminados
                 );
-                if (rows != null && !rows.isEmpty()) {
+                if (tieneDatos(rows)) {
                     return rows;
                 }
             }
@@ -1004,39 +990,23 @@ public class ConformacionCuadrillaRepository {
     }
 
     /**
-     * Lista registros con eliminados desde la sucursal seleccionada.
+     * Ejecuta listado activo o listado con eliminados segun modo.
      */
-    private List<Map<String, Object>> listarConEliminadosEnSucursalSeleccionada(
-            String sucursalParam,
+    private List<Map<String, Object>> listarEnTemplateSegunModo(
+            JdbcTemplate template,
             Object fechaParam,
+            String sucursalParam,
             Integer limite,
             Integer idTecnico,
-            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo) {
-        if (sucursalParam == null || sucursalParam.trim().isEmpty()) {
-            return new ArrayList<>();
+            boolean incluirEliminados) {
+        if (incluirEliminados) {
+            return listarConEliminadosEnTemplate(template, fechaParam, sucursalParam, limite, idTecnico);
         }
-        if (dbInfo == null) {
-            return new ArrayList<>();
-        }
-        JdbcTemplate sucursalTemplate = crearJdbcTemplateSucursal(dbInfo);
-        Set<String> filtros = dbSupport.construirFiltrosConsulta(sucursalParam, dbInfo);
-        try {
-            for (String filtro : filtros) {
-                List<Map<String, Object>> rows = listarConEliminadosEnTemplate(
-                        sucursalTemplate,
-                        fechaParam,
-                        filtro,
-                        limite,
-                        idTecnico
-                );
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            }
-            return new ArrayList<>();
-        } catch (DataAccessException ex) {
-            return new ArrayList<>();
-        }
+        return listarEnTemplate(template, fechaParam, sucursalParam, limite, idTecnico);
+    }
+
+    private boolean tieneDatos(List<Map<String, Object>> rows) {
+        return rows != null && !rows.isEmpty();
     }
 
     private String normalizarSucursal(String sucursal) {

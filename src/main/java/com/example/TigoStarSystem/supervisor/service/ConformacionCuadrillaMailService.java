@@ -29,6 +29,9 @@ public class ConformacionCuadrillaMailService {
     private final String destinatario;
     private final String remitente;
 
+    /**
+     * Inicializa servicio de correo para notificacion de cuadrillas.
+     */
     public ConformacionCuadrillaMailService(
             JavaMailSender mailSender,
             @Value("${app.cuadrilla.mail.enabled:false}") boolean enabled,
@@ -40,6 +43,9 @@ public class ConformacionCuadrillaMailService {
         this.remitente = remitente;
     }
 
+    /**
+     * Envia correo con resumen de cuadrillas confirmadas y pendientes.
+     */
     public void enviarDetalleCuadrillasNoConfirmadas(
             List<Map<String, Object>> cuadrillasDisponibles,
             List<ConformacionCuadrillaRowRequest> filasConfirmadas) {
@@ -132,6 +138,9 @@ public class ConformacionCuadrillaMailService {
         }
     }
 
+    /**
+     * Construye HTML del correo con tablas de confirmadas y pendientes.
+     */
     private String buildHtmlCorreo(
             LocalDate fecha,
             String sucursal,
@@ -186,6 +195,9 @@ public class ConformacionCuadrillaMailService {
         return html.toString();
     }
 
+    /**
+     * Agrega tabla HTML de cuadrillas confirmadas.
+     */
     private void appendConfirmadasTable(StringBuilder html, List<ConformacionCuadrillaRowRequest> confirmadas) {
         html.append("<table style='width:100%;border-collapse:collapse;font-size:12px;'>");
         html.append("<tr style='background:#d9e2f3;'>");
@@ -219,6 +231,9 @@ public class ConformacionCuadrillaMailService {
         html.append("</table>");
     }
 
+    /**
+     * Agrega tabla HTML de cuadrillas pendientes.
+     */
     private void appendPendientesTable(StringBuilder html, List<ConformacionCuadrillaPendiente> noConfirmadas) {
         html.append("<table style='width:100%;border-collapse:collapse;font-size:12px;'>");
         html.append("<tr style='background:#fdecc8;'>");
@@ -240,6 +255,9 @@ public class ConformacionCuadrillaMailService {
         html.append("</table>");
     }
 
+    /**
+     * Agrega celda de resumen (label + valor) en cabecera del correo.
+     */
     private void appendSummaryCell(StringBuilder html, String label, String value) {
         html.append("<td style='border:1px solid #dbe3ef;padding:8px 10px;width:25%;vertical-align:top;'>");
         html.append("<div style='font-size:11px;color:#4b5563;'>").append(escapeHtml(label)).append("</div>");
@@ -247,18 +265,27 @@ public class ConformacionCuadrillaMailService {
         html.append("</td>");
     }
 
+    /**
+     * Agrega celda de cabecera de tabla.
+     */
     private void appendHeaderCell(StringBuilder html, String value) {
         html.append("<th style='border:1px solid #c7d2e5;padding:7px 8px;text-align:left;font-weight:700;'>");
         html.append(escapeHtml(value));
         html.append("</th>");
     }
 
+    /**
+     * Agrega celda de datos de tabla.
+     */
     private void appendDataCell(StringBuilder html, String value) {
         html.append("<td style='border:1px solid #dbe3ef;padding:7px 8px;vertical-align:top;'>");
         html.append(escapeHtml(value));
         html.append("</td>");
     }
 
+    /**
+     * Escapa caracteres peligrosos para render seguro en HTML.
+     */
     private String escapeHtml(String value) {
         if (value == null || value.trim().isEmpty()) {
             return "-";
@@ -272,6 +299,9 @@ public class ConformacionCuadrillaMailService {
         return escaped;
     }
 
+    /**
+     * Resuelve nombre de tecnico evitando duplicar el nombre de grupo.
+     */
     private String resolveTecnicoPendiente(Map<String, Object> row, String grupo) {
         String tecnico = resolveString(
                 row,
@@ -294,6 +324,9 @@ public class ConformacionCuadrillaMailService {
         return null;
     }
 
+    /**
+     * Obtiene primer string no vacio entre varias claves candidatas.
+     */
     private String resolveString(Map<String, Object> row, String... keys) {
         if (row == null || keys == null) {
             return null;
@@ -311,6 +344,9 @@ public class ConformacionCuadrillaMailService {
         return null;
     }
 
+    /**
+     * Busca valor por clave ignorando mayusculas y separadores.
+     */
     private Object getCaseInsensitive(Map<String, Object> row, String targetKey) {
         String normalizedTarget = normalize(targetKey);
         for (Map.Entry<String, Object> entry : row.entrySet()) {
@@ -321,6 +357,9 @@ public class ConformacionCuadrillaMailService {
         return null;
     }
 
+    /**
+     * Normaliza texto para comparaciones de etiquetas.
+     */
     private String normalize(String value) {
         if (value == null) {
             return "";
@@ -328,6 +367,9 @@ public class ConformacionCuadrillaMailService {
         return value.replaceAll("[^a-zA-Z0-9]", "").trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Compara dos etiquetas despues de normalizarlas.
+     */
     private boolean isSameLabel(String left, String right) {
         if (isBlank(left) || isBlank(right)) {
             return false;
@@ -335,10 +377,16 @@ public class ConformacionCuadrillaMailService {
         return normalize(left).equals(normalize(right));
     }
 
+    /**
+     * Evalua si un texto esta vacio.
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
 
+    /**
+     * Determina si la fila no esta marcada como eliminada.
+     */
     private boolean esNoEliminada(Map<String, Object> row) {
         Object value = getCaseInsensitive(row, "e_eliminado");
         if (value == null) {
@@ -363,12 +411,18 @@ public class ConformacionCuadrillaMailService {
         return "0".equals(text) || "false".equals(text) || "n".equals(text) || "no".equals(text);
     }
 
+    /**
+     * DTO interno para representar una cuadrilla pendiente en el correo.
+     */
     private static final class ConformacionCuadrillaPendiente {
         private final String grupo;
         private final String tecnico;
         private final String idTecnico;
         private final String vehiculo;
 
+        /**
+         * Crea item pendiente para tabla de correo.
+         */
         private ConformacionCuadrillaPendiente(String grupo, String tecnico, String idTecnico, String vehiculo) {
             this.grupo = grupo;
             this.tecnico = tecnico;

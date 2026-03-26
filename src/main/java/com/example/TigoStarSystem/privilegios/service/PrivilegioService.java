@@ -25,10 +25,18 @@ public class PrivilegioService {
             java.util.Arrays.asList(7, 8, 9, 10, 60, 62);
     private final PrivilegioRepository repository;
 
+    /**
+     * Inicializa el servicio de privilegios con su repositorio de acceso a datos.
+     */
     public PrivilegioService(PrivilegioRepository repository) {
         this.repository = repository;
     }
 
+
+
+    /**
+     * Obtiene el catalogo de roles disponibles para administrar privilegios.
+     */
     public List<PrivilegioRolResponse> listarRoles() {
         List<Map<String, Object>> rows = repository.listarRoles();
         List<PrivilegioRolResponse> response = new ArrayList<>();
@@ -43,12 +51,25 @@ public class PrivilegioService {
         return response;
     }
 
+
+
+
+
+    /**
+     * Retorna el detalle de menus asignados/no asignados para un rol dado.
+     */
     public PrivilegioRolDetalleResponse obtenerPrivilegiosPorRol(Integer idRol) {
         String rol = resolverNombreRol(idRol);
         List<PrivilegioMenuResponse> menus = construirMenus(repository.obtenerPrivilegiosRolDetalle(idRol));
         return new PrivilegioRolDetalleResponse(idRol, rol, menus);
     }
 
+
+
+
+    /**
+     * Reemplaza los privilegios de un rol con el conjunto de menus recibido.
+     */
     public PrivilegioRolDetalleResponse actualizarPrivilegiosRol(Integer idRol, List<Integer> menuIds) {
         String rol = resolverNombreRol(idRol);
         List<Integer> seleccion = sanitizarMenuIds(menuIds);
@@ -59,10 +80,21 @@ public class PrivilegioService {
         return new PrivilegioRolDetalleResponse(idRol, rol, menus);
     }
 
+
+
+    /**
+     * Aplica un set predefinido de menus para el perfil Supervisor Cuadrillas.
+     */
     public PrivilegioRolDetalleResponse aplicarPresetSupervisorCuadrillas(Integer idRol) {
         return actualizarPrivilegiosRol(idRol, MENU_IDS_PRESET_SUPERVISOR_CUADRILLAS);
     }
 
+
+
+
+    /**
+     * Arma los permisos efectivos del usuario autenticado a partir de su rol.
+     */
     public PrivilegioUsuarioResponse obtenerPermisosUsuario(AuthLoginResponse usuario, boolean administrador) {
         if (usuario == null || usuario.getIdRol() == null) {
             throw new ApiException(
@@ -89,6 +121,12 @@ public class PrivilegioService {
         );
     }
 
+
+
+
+    /**
+     * Mapea filas de BD a DTO de menu, normalizando nombres y banderas de asignacion.
+     */
     private List<PrivilegioMenuResponse> construirMenus(List<Map<String, Object>> rows) {
         List<PrivilegioMenuResponse> response = new ArrayList<>();
         for (Map<String, Object> row : rows) {
@@ -106,6 +144,13 @@ public class PrivilegioService {
         return response;
     }
 
+
+
+
+
+    /**
+     * Busca el nombre de rol por id y valida que exista.
+     */
     private String resolverNombreRol(Integer idRol) {
         if (idRol == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idRol es requerido.");
@@ -119,6 +164,12 @@ public class PrivilegioService {
         throw new ApiException(HttpStatus.NOT_FOUND, "ROL_NOT_FOUND", "Rol no encontrado.");
     }
 
+
+
+
+    /**
+     * Convierte una lista de ids en formato CSV para enviarlo al SP.
+     */
     private String joinCsv(List<Integer> values) {
         if (values == null || values.isEmpty()) {
             return "";
@@ -133,6 +184,13 @@ public class PrivilegioService {
         return sb.toString();
     }
 
+
+
+
+
+    /**
+     * Limpia ids de menu: elimina nulos, no positivos y duplicados.
+     */
     private List<Integer> sanitizarMenuIds(List<Integer> menuIds) {
         if (menuIds == null) {
             return Collections.emptyList();
@@ -150,6 +208,13 @@ public class PrivilegioService {
         return result;
     }
 
+
+
+
+
+    /**
+     * Obtiene un valor del map usando aliases de columna equivalentes.
+     */
     private Object findValue(Map<String, Object> row, String... candidates) {
         Map<String, Object> normalized = new HashMap<>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
@@ -164,10 +229,25 @@ public class PrivilegioService {
         return null;
     }
 
+
+
+
+
+
+    /**
+     * Normaliza claves removiendo "_" y forzando minusculas.
+     */
     private String normalize(String value) {
         return value == null ? "" : value.replace("_", "").toLowerCase(Locale.ROOT);
     }
 
+
+
+    
+
+    /**
+     * Convierte un valor dinamico a Integer de forma segura.
+     */
     private Integer toInteger(Object value) {
         if (value == null) {
             return null;
@@ -182,6 +262,9 @@ public class PrivilegioService {
         }
     }
 
+    /**
+     * Convierte un valor dinamico a Boolean aceptando formatos numericos y texto.
+     */
     private Boolean toBoolean(Object value) {
         if (value == null) {
             return null;
@@ -205,6 +288,9 @@ public class PrivilegioService {
         return null;
     }
 
+    /**
+     * Normaliza el nombre tecnico de menu para mostrarlo en UI.
+     */
     private String limpiarNombreMenu(String raw) {
         if (raw == null) {
             return null;
@@ -233,6 +319,9 @@ public class PrivilegioService {
         return sb.toString();
     }
 
+    /**
+     * Da formato legible a cada token del nombre de menu respetando siglas.
+     */
     private String formatToken(String token) {
         if (token == null || token.isEmpty()) {
             return token;
@@ -252,6 +341,9 @@ public class PrivilegioService {
         return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
+    /**
+     * Convierte un valor dinamico a String.
+     */
     private String toString(Object value) {
         return value == null ? null : value.toString();
     }

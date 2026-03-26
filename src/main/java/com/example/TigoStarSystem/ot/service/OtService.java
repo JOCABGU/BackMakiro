@@ -26,10 +26,16 @@ public class OtService {
     private static final Logger logger = LoggerFactory.getLogger(OtService.class);
     private final OtRepository otRepository;
 
+    /**
+     * Inicializa el servicio principal de Ordenes de Trabajo.
+     */
     public OtService(OtRepository otRepository) {
         this.otRepository = otRepository;
     }
 
+    /**
+     * Lista OT por fecha y sucursal.
+     */
     public List<Map<String, Object>> listarPorFecha(LocalDate fecha, Integer idSucursal) {
         logger.info("Listar OT por fecha={}", fecha);
         List<Map<String, Object>> rows = otRepository.obtenerOrdenesPorFecha(fecha, idSucursal);
@@ -37,6 +43,9 @@ public class OtService {
         return rows;
     }
 
+    /**
+     * Lista OT por rango de fechas y sucursal.
+     */
     public List<Map<String, Object>> listarPorRango(LocalDate inicio, LocalDate fin, Integer idSucursal) {
         logger.info("Listar OT por rango inicio={}, fin={}", inicio, fin);
         List<Map<String, Object>> rows = otRepository.obtenerOrdenesPorRango(inicio, fin, idSucursal);
@@ -44,6 +53,9 @@ public class OtService {
         return rows;
     }
 
+    /**
+     * Obtiene una OT por id de venta.
+     */
     public Map<String, Object> obtenerPorId(Long idVenta, Integer idSucursal) {
         logger.info("Obtener OT por idVenta={}", idVenta);
         List<Map<String, Object>> rows = otRepository.obtenerOrdenTrabajoPorIdVenta(idVenta, idSucursal);
@@ -53,6 +65,9 @@ public class OtService {
         return rows.get(0);
     }
 
+    /**
+     * Obtiene una OT por numero de orden.
+     */
     public Map<String, Object> obtenerPorNumero(String numeroOrden, Integer idSucursal) {
         logger.info("Obtener OT por numero={}", numeroOrden);
         List<Map<String, Object>> rows = otRepository.obtenerOrdenTrabajoPorNumero(numeroOrden, idSucursal);
@@ -62,22 +77,37 @@ public class OtService {
         return rows.get(0);
     }
 
+    /**
+     * Obtiene detalle de materiales instalados de una venta.
+     */
     public List<Map<String, Object>> obtenerDetalleInstalado(Long idVenta, Integer idSucursal) {
         return otRepository.obtenerDetalleInstalado(idVenta, idSucursal);
     }
 
+    /**
+     * Obtiene detalle de materiales retirados de una venta.
+     */
     public List<Map<String, Object>> obtenerDetalleRetirado(Long idVenta, Integer idSucursal) {
         return otRepository.obtenerDetalleRetirado(idVenta, idSucursal);
     }
 
+    /**
+     * Obtiene detalle de excedentes de una venta.
+     */
     public List<Map<String, Object>> obtenerDetalleExcedente(Long idVenta, Integer idSucursal) {
         return otRepository.obtenerDetalleExcedente(idVenta, idSucursal);
     }
 
+    /**
+     * Obtiene detalle de cargo usuario para una venta.
+     */
     public List<Map<String, Object>> obtenerDetalleCargoUsuario(Long idVenta, Integer idSucursal) {
         return otRepository.obtenerDetalleCargoUsuario(idVenta, idSucursal);
     }
 
+    /**
+     * Registra una nueva OT y devuelve ids principales.
+     */
     public OtCrearResponse crearOt(OtCrearRequest request, Integer idSucursal) {
         Map<String, Object> result = otRepository.registrarOt(
                 request.getIdUsuario(),
@@ -96,6 +126,9 @@ public class OtService {
         return new OtCrearResponse(idVenta, ordenTrabajo);
     }
 
+    /**
+     * Marca OT como realizada usando numero de orden.
+     */
     public int registrarOtRealizada(OtRealizadaRequest request, Integer idSucursal) {
         return otRepository.modificarOtRealizada(
                 request.getObservacion(),
@@ -105,6 +138,9 @@ public class OtService {
         );
     }
 
+    /**
+     * Modifica datos basicos de OT; usa id path como fallback de numero de orden.
+     */
     public int modificarDatosOt(Long idVentaPath, OtModificarDatosRequest request, Integer idSucursal) {
         String numeroOrden = request.getNumeroOrden();
         if (numeroOrden == null || numeroOrden.trim().isEmpty()) {
@@ -119,6 +155,9 @@ public class OtService {
         );
     }
 
+    /**
+     * Modifica fecha de OT validando reglas de cuadre y ruta.
+     */
     public OtModificarFechaResponse modificarFecha(Long idVenta, OtModificarFechaRequest request, Integer idSucursal) {
         List<Map<String, Object>> validacionModificacion =
                 otRepository.sePuedeModificarOrdenTrabajo(
@@ -154,6 +193,9 @@ public class OtService {
         return new OtModificarFechaResponse(updated, validacionCuadre, validacionModificacion);
     }
 
+    /**
+     * Anula solo el cargo usuario asociado a una OT.
+     */
     public int anularSoloCu(Long idVenta, Integer idUsuario, Integer idSucursal) {
         if (idUsuario == null) {
             throw new ApiException(
@@ -165,6 +207,9 @@ public class OtService {
         return otRepository.eliminarCodigoUsuarioVenta(idVenta, idUsuario, idSucursal);
     }
 
+    /**
+     * Marca anulacion OT + CU como no implementada hasta definir SP final.
+     */
     public void anularConCu(Long idVenta, Integer idUsuario) {
         Map<String, Object> details = new HashMap<>();
         details.put("idVenta", idVenta);
@@ -179,6 +224,9 @@ public class OtService {
         );
     }
 
+    /**
+     * Filtra listado de OT por pendiente y/o por tecnico autenticado.
+     */
     public List<Map<String, Object>> filtrarListado(
             List<Map<String, Object>> rows,
             Integer idUsuario,
@@ -217,6 +265,9 @@ public class OtService {
         return result;
     }
 
+    /**
+     * Determina si el rol corresponde a un tecnico.
+     */
     private boolean esTecnico(String rol) {
         if (rol == null) {
             return false;
@@ -228,6 +279,9 @@ public class OtService {
         return normalized.contains("tecnico") || normalized.equals("tec") || normalized.contains("tech");
     }
 
+    /**
+     * Determina si una OT esta pendiente a partir de flags/estado textual.
+     */
     private boolean esPendiente(Map<String, Object> row) {
         Object flag = findValue(row,
                 "otrealizada", "ot_realizada", "realizada", "realizado",
@@ -263,6 +317,9 @@ public class OtService {
         return true;
     }
 
+    /**
+     * Verifica si la fila de OT pertenece al usuario indicado.
+     */
     private boolean perteneceUsuario(Map<String, Object> row, Integer idUsuario) {
         Object value = findValue(row,
                 "idusuario", "id_usuario", "iduser", "usuarioid",
@@ -282,6 +339,9 @@ public class OtService {
         return rowId.equals(idUsuario);
     }
 
+    /**
+     * Detecta textos de estado finalizado/cerrado.
+     */
     private boolean contieneEstadoFinal(String normalized) {
         return contiene(normalized,
                 "realizada", "realizado",
@@ -293,6 +353,9 @@ public class OtService {
                 "entregada", "entregado");
     }
 
+    /**
+     * Detecta textos de estado pendiente/en proceso.
+     */
     private boolean contieneEstadoPendiente(String normalized) {
         return contiene(normalized,
                 "pendiente",
@@ -304,6 +367,9 @@ public class OtService {
                 "programado");
     }
 
+    /**
+     * Evalua si el texto contiene alguno de los tokens dados.
+     */
     private boolean contiene(String value, String... tokens) {
         if (value == null || value.isEmpty()) {
             return false;
@@ -316,6 +382,9 @@ public class OtService {
         return false;
     }
 
+    /**
+     * Convierte valores dinamicos a boolean soportando formatos numericos/texto.
+     */
     private Boolean toBoolean(Object value) {
         if (value == null) {
             return null;
@@ -339,6 +408,9 @@ public class OtService {
         return null;
     }
 
+    /**
+     * Convierte valor dinamico a Integer de forma segura.
+     */
     private Integer toInteger(Object value) {
         if (value == null) {
             return null;
@@ -353,6 +425,9 @@ public class OtService {
         }
     }
 
+    /**
+     * Busca el primer valor disponible por aliases de columna.
+     */
     private Object findValue(Map<String, Object> row, String... candidates) {
         Map<String, Object> normalized = new HashMap<>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
@@ -368,6 +443,9 @@ public class OtService {
         return null;
     }
 
+    /**
+     * Normaliza nombre de columna para comparacion uniforme.
+     */
     private String normalizeKey(String key) {
         if (key == null) {
             return "";
@@ -378,6 +456,9 @@ public class OtService {
                 .toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Normaliza texto (sin tildes, en minusculas) para comparaciones.
+     */
     private String normalizeText(String value) {
         if (value == null) {
             return "";
@@ -387,6 +468,9 @@ public class OtService {
         return normalized.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Interpreta resultado de SPs de validacion con heuristica flexible.
+     */
     private boolean resultadoValido(List<Map<String, Object>> rows) {
         // TODO: Ajustar esta logica cuando se conozcan columnas exactas de los SPs de validacion.
         if (rows == null || rows.isEmpty()) {
@@ -414,6 +498,9 @@ public class OtService {
         return false;
     }
 
+    /**
+     * Fabrica error 404 estandar para entidades OT no encontradas.
+     */
     private ApiException notFound(String message) {
         return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", message);
     }

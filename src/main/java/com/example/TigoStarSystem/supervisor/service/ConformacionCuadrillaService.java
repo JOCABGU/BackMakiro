@@ -25,6 +25,9 @@ public class ConformacionCuadrillaService {
     private final ConformacionCuadrillaRequestValidator validator;
     private final ConformacionCuadrillaRowMapper rowMapper;
 
+    /**
+     * Inicializa el servicio principal de conformacion de cuadrillas.
+     */
     public ConformacionCuadrillaService(
             ConformacionCuadrillaRepository repository,
             ConformacionCuadrillaMailService mailService) {
@@ -34,10 +37,16 @@ public class ConformacionCuadrillaService {
         this.rowMapper = new ConformacionCuadrillaRowMapper();
     }
 
+    /**
+     * Lista registros de conformacion segun fecha/sucursal/limite/tecnico.
+     */
     public List<Map<String, Object>> listar(LocalDate fecha, String sucursal, Integer limite, Integer idTecnico) {
         return repository.listar(fecha, sucursal, limite, idTecnico);
     }
 
+    /**
+     * Obtiene el detalle de una conformacion y lo mapea al formato API.
+     */
     public Map<String, Object> obtenerDetalle(Long id, String sucursal) {
         validarId(id);
         Map<String, Object> row = repository.obtenerPorId(id, sucursal);
@@ -51,18 +60,30 @@ public class ConformacionCuadrillaService {
         return rowMapper.mapConfirmada(row, sucursal, null);
     }
 
+    /**
+     * Lista tecnicos con filtro por texto y limite.
+     */
     public List<Map<String, Object>> listarTecnicos(String q, Integer limit, String sucursal) {
         return TecnicoSearchUtil.filterAndLimit(repository.listarTecnicos(sucursal), q, limit);
     }
 
+    /**
+     * Lista tecnicos para filtro de edicion con busqueda y limite.
+     */
     public List<Map<String, Object>> listarTecnicosFiltroEdicion(String q, Integer limit, String sucursal) {
         return TecnicoSearchUtil.filterAndLimit(repository.listarTecnicosFiltroEdicion(sucursal), q, limit);
     }
 
+    /**
+     * Lista auxiliares filtrados por texto y limite.
+     */
     public List<Map<String, Object>> listarAuxiliares(String q, Integer limit) {
         return TecnicoSearchUtil.filterAndLimit(repository.listarAuxiliares(), q, limit);
     }
 
+    /**
+     * Retorna catalogo fijo de actividades permitidas.
+     */
     public List<Map<String, Object>> listarActividades() {
         List<Map<String, Object>> actividades = new ArrayList<>();
         actividades.add(crearActividad("TITULAR"));
@@ -70,6 +91,9 @@ public class ConformacionCuadrillaService {
         return actividades;
     }
 
+    /**
+     * Obtiene detalle de un tecnico por id.
+     */
     public List<Map<String, Object>> obtenerTecnicoDetalle(Integer idTecnico) {
         if (idTecnico == null) {
             throw new ApiException(
@@ -81,10 +105,16 @@ public class ConformacionCuadrillaService {
         return repository.obtenerTecnicoDetalle(idTecnico);
     }
 
+    /**
+     * Lista digitadores.
+     */
     public List<Map<String, Object>> listarDigitadores() {
         return repository.listarDigitadores();
     }
 
+    /**
+     * Lista digitadores para edicion eliminando duplicados.
+     */
     public List<Map<String, Object>> listarDigitadoresFiltroEdicion() {
         return rowMapper.deduplicarPorPrimerCampoNoNulo(
                 repository.listarDigitadoresFiltroEdicion(),
@@ -95,10 +125,16 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Lista supervisores.
+     */
     public List<Map<String, Object>> listarSupervisores() {
         return repository.listarSupervisores();
     }
 
+    /**
+     * Lista vehiculos y elimina duplicados por placa/vehiculo.
+     */
     public List<Map<String, Object>> listarVehiculos(String filtro) {
         return rowMapper.deduplicarPorPrimerCampoNoNulo(
                 repository.listarVehiculos(filtro),
@@ -109,6 +145,9 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Lista vehiculos para edicion, opcionalmente priorizando tecnico.
+     */
     public List<Map<String, Object>> listarVehiculosFiltroEdicion(Integer idTecnico) {
         return rowMapper.deduplicarPorPrimerCampoNoNulo(
                 repository.listarVehiculosFiltroEdicion(idTecnico),
@@ -119,10 +158,16 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Sobrecarga para listar grupos de edicion sin filtros.
+     */
     public List<Map<String, Object>> listarGruposFiltroEdicion() {
         return listarGruposFiltroEdicion(null, null, null);
     }
 
+    /**
+     * Lista grupos de edicion deduplicados y filtrados por texto/limite.
+     */
     public List<Map<String, Object>> listarGruposFiltroEdicion(String sucursal, String q, Integer limit) {
         List<Map<String, Object>> grupos = rowMapper.deduplicarPorPrimerCampoNoNulo(
                 repository.listarGruposFiltroEdicion(sucursal),
@@ -144,6 +189,9 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Calcula cuadrillas pendientes comparando catalogo vs confirmadas del dia.
+     */
     public List<Map<String, Object>> listarCuadrillasPendientes(
             LocalDate fecha,
             String sucursal,
@@ -151,7 +199,7 @@ public class ConformacionCuadrillaService {
             Integer limit) {
         LocalDate fechaConsulta = resolverFecha(fecha);
         List<Map<String, Object>> catalogo = repository.listarGruposFiltroEdicion(sucursal);
-        List<Map<String, Object>> confirmadas = repository.listarConEliminados(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> confirmadas = repository.listar(fechaConsulta, sucursal, null, null);
         Map<Integer, Map<String, Object>> historicoByTecnico = indexUltimaConfirmacionPorTecnico(fechaConsulta, sucursal);
         Map<Integer, Map<String, Object>> tecnicosById = rowMapper.indexTecnicosById(repository.listarTecnicos(sucursal));
 
@@ -195,64 +243,50 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Lista cuadrillas confirmadas del dia.
+     */
     public List<Map<String, Object>> listarCuadrillasConfirmadas(
             LocalDate fecha,
             String sucursal,
             String q,
             Integer limit) {
-        return listarCuadrillasPorEstado(fecha, sucursal, q, limit, false);
+        LocalDate fechaConsulta = resolverFecha(fecha);
+        List<Map<String, Object>> rows = repository.listar(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            out.add(rowMapper.mapConfirmada(row, sucursal, fechaConsulta));
+        }
+        return rowMapper.filtrarPorTextoYLimite(
+                out,
+                q,
+                limit,
+                "grupo",
+                "cuadrilla",
+                "ruta",
+                "tecnico",
+                "auxiliar",
+                "digitador",
+                "supervisoracargo",
+                "observacion",
+                "vehiculo"
+        );
     }
 
+    /**
+     * Lista cuadrillas eliminadas del dia.
+     */
     public List<Map<String, Object>> listarCuadrillasEliminadas(
             LocalDate fecha,
             String sucursal,
             String q,
             Integer limit) {
-        return listarCuadrillasPorEstado(fecha, sucursal, q, limit, true);
-    }
-
-    public List<Map<String, Object>> obtenerSucursalActual() {
-        return repository.obtenerSucursalActual();
-    }
-
-    public int guardar(ConformacionCuadrillaCreateRequest request) {
-        validarRequestCreacion(request);
-
-        int total = 0;
-        for (ConformacionCuadrillaRowRequest fila : request.getFilas()) {
-            validator.validarBackoffice(fila);
-            total += repository.guardarFilaConfirmada(fila);
-        }
-
-        enviarCorreoCuadrillasNoConfirmadas(request.getFilas());
-        return total;
-    }
-
-    public int actualizar(Long id, ConformacionCuadrillaRowRequest request) {
-        validarId(id);
-        validator.validarBackoffice(request);
-        int affected = repository.actualizarFila(id, request);
-        if (affected > 0) {
-            List<ConformacionCuadrillaRowRequest> filas = new ArrayList<>();
-            filas.add(request);
-            enviarCorreoCuadrillasNoConfirmadas(filas);
-        }
-        return affected;
-    }
-
-    private List<Map<String, Object>> listarCuadrillasPorEstado(
-            LocalDate fecha,
-            String sucursal,
-            String q,
-            Integer limit,
-            boolean eliminadas) {
         LocalDate fechaConsulta = resolverFecha(fecha);
         List<Map<String, Object>> rows = repository.listarConEliminados(fechaConsulta, sucursal, null, null);
         List<Map<String, Object>> out = new ArrayList<>();
 
         for (Map<String, Object> row : rows) {
-            boolean eliminado = rowMapper.isEliminado(row);
-            if (eliminadas != eliminado) {
+            if (!rowMapper.isEliminado(row)) {
                 continue;
             }
             out.add(rowMapper.mapConfirmada(row, sucursal, fechaConsulta));
@@ -274,6 +308,47 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Devuelve sucursales para selector de interfaz.
+     */
+    public List<Map<String, Object>> obtenerSucursalActual() {
+        return repository.obtenerSucursalActual();
+    }
+
+    /**
+     * Guarda una o varias filas de conformacion y dispara notificacion.
+     */
+    public int guardar(ConformacionCuadrillaCreateRequest request) {
+        validarRequestCreacion(request);
+
+        int total = 0;
+        for (ConformacionCuadrillaRowRequest fila : request.getFilas()) {
+            validator.validarBackoffice(fila);
+            total += repository.guardarFilaConfirmada(fila);
+        }
+
+        enviarCorreoCuadrillasNoConfirmadas(request.getFilas());
+        return total;
+    }
+
+    /**
+     * Actualiza una fila existente y notifica por correo si hubo cambios.
+     */
+    public int actualizar(Long id, ConformacionCuadrillaRowRequest request) {
+        validarId(id);
+        validator.validarBackoffice(request);
+        int affected = repository.actualizarFila(id, request);
+        if (affected > 0) {
+            List<ConformacionCuadrillaRowRequest> filas = new ArrayList<>();
+            filas.add(request);
+            enviarCorreoCuadrillasNoConfirmadas(filas);
+        }
+        return affected;
+    }
+
+    /**
+     * Construye conjunto de claves de cuadrillas ya confirmadas.
+     */
     private Set<String> obtenerClavesConfirmadas(List<Map<String, Object>> confirmadas) {
         Set<String> claves = new HashSet<>();
         if (confirmadas == null || confirmadas.isEmpty()) {
@@ -281,9 +356,6 @@ public class ConformacionCuadrillaService {
         }
 
         for (Map<String, Object> row : confirmadas) {
-            if (rowMapper.isEliminado(row)) {
-                continue;
-            }
             String key = rowMapper.claveCuadrillaDesdeConfirmada(row);
             if (key != null) {
                 claves.add(key);
@@ -292,6 +364,9 @@ public class ConformacionCuadrillaService {
         return claves;
     }
 
+    /**
+     * Envia correo con cuadrillas faltantes usando sucursal de las filas.
+     */
     private void enviarCorreoCuadrillasNoConfirmadas(List<ConformacionCuadrillaRowRequest> filas) {
         String sucursal = filas.isEmpty() ? null : filas.get(0).getSucursal();
         mailService.enviarDetalleCuadrillasNoConfirmadas(
@@ -300,6 +375,9 @@ public class ConformacionCuadrillaService {
         );
     }
 
+    /**
+     * Indexa la ultima confirmacion por tecnico, priorizando registros de ayer.
+     */
     private Map<Integer, Map<String, Object>> indexUltimaConfirmacionPorTecnico(LocalDate fechaConsulta, String sucursal) {
         Map<Integer, Map<String, Object>> exactAyer = new HashMap<>();
         Map<Integer, Map<String, Object>> previas = new HashMap<>();
@@ -308,15 +386,12 @@ public class ConformacionCuadrillaService {
         }
 
         LocalDate fechaAyer = fechaConsulta.minusDays(1);
-        List<Map<String, Object>> rows = repository.listarConEliminados(null, sucursal, null, null);
+        List<Map<String, Object>> rows = repository.listar(null, sucursal, null, null);
         if (rows == null || rows.isEmpty()) {
             return previas;
         }
 
         for (Map<String, Object> row : rows) {
-            if (rowMapper.isEliminado(row)) {
-                continue;
-            }
             LocalDate fechaRow = valueAsLocalDate(getCaseInsensitive(row, "fecha"));
             if (fechaRow == null || !fechaRow.isBefore(fechaConsulta)) {
                 continue;
@@ -346,6 +421,9 @@ public class ConformacionCuadrillaService {
         return previas;
     }
 
+    /**
+     * Completa campos faltantes en pendiente usando datos historicos del tecnico.
+     */
     private void aplicarSugerenciasDesdeHistorico(Map<String, Object> pendiente, Map<String, Object> historico) {
         if (pendiente == null || pendiente.isEmpty() || historico == null || historico.isEmpty()) {
             return;
@@ -398,6 +476,9 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Escribe valor en aliases solo cuando el campo actual esta vacio.
+     */
     private void setIfBlankWithAliases(Map<String, Object> target, Object value, String... aliases) {
         if (target == null || aliases == null || aliases.length == 0 || isBlankValue(value)) {
             return;
@@ -411,6 +492,9 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Busca valor por varias claves ignorando diferencias de formato.
+     */
     private Object getCaseInsensitive(Map<String, Object> row, String... keys) {
         if (row == null || row.isEmpty() || keys == null || keys.length == 0) {
             return null;
@@ -426,6 +510,9 @@ public class ConformacionCuadrillaService {
         return null;
     }
 
+    /**
+     * Normaliza una clave para comparacion case-insensitive.
+     */
     private String normalizeKey(String key) {
         if (key == null) {
             return "";
@@ -433,6 +520,9 @@ public class ConformacionCuadrillaService {
         return key.replace("_", "").trim().toLowerCase();
     }
 
+    /**
+     * Convierte valor dinamico a Integer de forma segura.
+     */
     private Integer valueAsInteger(Object value) {
         if (value == null) {
             return null;
@@ -447,6 +537,9 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Convierte valor dinamico a LocalDate soportando varios tipos.
+     */
     private LocalDate valueAsLocalDate(Object value) {
         if (value == null) {
             return null;
@@ -470,6 +563,9 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Indica si un valor se considera vacio (null o string en blanco).
+     */
     private boolean isBlankValue(Object value) {
         if (value == null) {
             return true;
@@ -480,6 +576,9 @@ public class ConformacionCuadrillaService {
         return false;
     }
 
+    /**
+     * Verifica que el request de creacion tenga al menos una fila.
+     */
     private void validarRequestCreacion(ConformacionCuadrillaCreateRequest request) {
         if (request == null || request.getFilas() == null || request.getFilas().isEmpty()) {
             throw new ApiException(
@@ -490,6 +589,9 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Valida que un id sea positivo.
+     */
     private void validarId(Long id) {
         if (id == null || id <= 0) {
             throw new ApiException(
@@ -500,10 +602,16 @@ public class ConformacionCuadrillaService {
         }
     }
 
+    /**
+     * Usa fecha actual cuando no se envio fecha de consulta.
+     */
     private LocalDate resolverFecha(LocalDate fecha) {
         return fecha == null ? LocalDate.now() : fecha;
     }
 
+    /**
+     * Crea un item simple para el catalogo de actividades.
+     */
     private Map<String, Object> crearActividad(String actividad) {
         Map<String, Object> item = new java.util.HashMap<>();
         item.put("actividad", actividad);

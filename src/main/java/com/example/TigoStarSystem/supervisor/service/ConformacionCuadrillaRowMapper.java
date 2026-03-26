@@ -11,6 +11,9 @@ import java.util.Map;
 import java.util.Set;
 
 final class ConformacionCuadrillaRowMapper {
+    /**
+     * Elimina filas duplicadas usando el primer campo no nulo como llave.
+     */
     List<Map<String, Object>> deduplicarPorPrimerCampoNoNulo(
             List<Map<String, Object>> rows,
             String... campos) {
@@ -35,6 +38,9 @@ final class ConformacionCuadrillaRowMapper {
         return out;
     }
 
+    /**
+     * Filtra filas por texto y aplica limite maximo de resultados.
+     */
     List<Map<String, Object>> filtrarPorTextoYLimite(
             List<Map<String, Object>> rows,
             String q,
@@ -65,6 +71,9 @@ final class ConformacionCuadrillaRowMapper {
         return out;
     }
 
+    /**
+     * Indexa tecnicos por id para busquedas rapidas durante el mapeo.
+     */
     Map<Integer, Map<String, Object>> indexTecnicosById(List<Map<String, Object>> rows) {
         Map<Integer, Map<String, Object>> out = new HashMap<>();
         if (rows == null || rows.isEmpty()) {
@@ -80,6 +89,9 @@ final class ConformacionCuadrillaRowMapper {
         return out;
     }
 
+    /**
+     * Construye clave estable de cuadrilla desde fila de catalogo.
+     */
     String claveCuadrillaDesdeCatalogo(Map<String, Object> row) {
         Integer idTecnico = toInteger(getCaseInsensitive(row, "id_tecnico", "id_vendedor", "idvendedor"));
         if (idTecnico != null) {
@@ -96,6 +108,9 @@ final class ConformacionCuadrillaRowMapper {
         return grupo == null ? null : "GRUPO:" + grupo;
     }
 
+    /**
+     * Construye clave estable de cuadrilla desde fila confirmada.
+     */
     String claveCuadrillaDesdeConfirmada(Map<String, Object> row) {
         Integer idTecnico = toInteger(getCaseInsensitive(row, "id_tecnico", "idtecnico"));
         if (idTecnico != null) {
@@ -112,6 +127,9 @@ final class ConformacionCuadrillaRowMapper {
         return grupo == null ? null : "GRUPO:" + grupo;
     }
 
+    /**
+     * Mapea una fila de catalogo a estructura de cuadrilla pendiente.
+     */
     Map<String, Object> mapPendiente(
             Map<String, Object> row,
             String sucursal,
@@ -242,6 +260,9 @@ final class ConformacionCuadrillaRowMapper {
         return out;
     }
 
+    /**
+     * Mapea una fila persistida a estructura de cuadrilla confirmada.
+     */
     Map<String, Object> mapConfirmada(Map<String, Object> row, String sucursalFiltro, LocalDate fechaFiltro) {
         Map<String, Object> out = new LinkedHashMap<>();
         Object vehiculo = getCaseInsensitive(row, "vehiculo", "Vehiculo", "placa", "placavehiculo", "placaVehiculo");
@@ -325,11 +346,17 @@ final class ConformacionCuadrillaRowMapper {
         return out;
     }
 
+    /**
+     * Determina si una fila esta marcada como eliminada.
+     */
     boolean isEliminado(Map<String, Object> row) {
         Boolean eliminado = toBoolean(getCaseInsensitive(row, "e_eliminado", "eeliminado", "eliminado"));
         return Boolean.TRUE.equals(eliminado);
     }
 
+    /**
+     * Obtiene valor normalizado en mayusculas del primer campo con dato.
+     */
     private String valorNormalizado(Map<String, Object> row, String... campos) {
         if (row == null || campos == null) {
             return null;
@@ -348,6 +375,9 @@ final class ConformacionCuadrillaRowMapper {
         return null;
     }
 
+    /**
+     * Replica aliases de columnas para mantener compatibilidad entre vistas.
+     */
     private void applyConformacionAliases(Map<String, Object> out) {
         if (out == null || out.isEmpty()) {
             return;
@@ -366,6 +396,9 @@ final class ConformacionCuadrillaRowMapper {
         putAlias(out, "eEliminado", "e_eliminado");
     }
 
+    /**
+     * Copia valor canonico a aliases faltantes.
+     */
     private void putAlias(Map<String, Object> out, String canonical, String... aliases) {
         if (out == null || canonical == null) {
             return;
@@ -392,6 +425,9 @@ final class ConformacionCuadrillaRowMapper {
         }
     }
 
+    /**
+     * Busca el primer valor encontrado para cualquiera de las claves candidatas.
+     */
     private Object getCaseInsensitive(Map<String, Object> row, String... keys) {
         if (row == null || keys == null) {
             return null;
@@ -405,6 +441,9 @@ final class ConformacionCuadrillaRowMapper {
         return null;
     }
 
+    /**
+     * Busca valor por clave ignorando mayusculas/minusculas y guiones bajos.
+     */
     private Object getCaseInsensitive(Map<String, Object> row, String targetKey) {
         if (row == null || targetKey == null) {
             return null;
@@ -418,6 +457,9 @@ final class ConformacionCuadrillaRowMapper {
         return null;
     }
 
+    /**
+     * Normaliza una clave para comparaciones case-insensitive.
+     */
     private String normalizeKey(String key) {
         if (key == null) {
             return "";
@@ -425,6 +467,9 @@ final class ConformacionCuadrillaRowMapper {
         return key.replace("_", "").trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Convierte un valor dinamico a Integer de forma segura.
+     */
     private Integer toInteger(Object value) {
         if (value == null) {
             return null;
@@ -439,6 +484,9 @@ final class ConformacionCuadrillaRowMapper {
         }
     }
 
+    /**
+     * Convierte un valor dinamico a Boolean.
+     */
     private Boolean toBoolean(Object value) {
         if (value == null) {
             return null;
@@ -460,10 +508,16 @@ final class ConformacionCuadrillaRowMapper {
         return null;
     }
 
+    /**
+     * Convierte un valor dinamico a String.
+     */
     private String toString(Object value) {
         return value == null ? null : value.toString();
     }
 
+    /**
+     * Retorna null para cadenas vacias y trim para cadenas con valor.
+     */
     private String trimToNull(String value) {
         if (value == null) {
             return null;
@@ -472,10 +526,16 @@ final class ConformacionCuadrillaRowMapper {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * Retorna preferred cuando existe; si no, fallback.
+     */
     private String firstNonBlank(String preferred, String fallback) {
         return preferred != null ? preferred : fallback;
     }
 
+    /**
+     * Convierte una cadena a mayusculas y null si esta vacia.
+     */
     private String toUpperTrimOrNull(String value) {
         if (value == null) {
             return null;

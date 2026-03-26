@@ -23,6 +23,8 @@ import java.util.List;
 
 @Validated
 @RestController
+
+
 @RequestMapping("/auth")
 public class AuthController {
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
@@ -35,6 +37,7 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<AuthLoginResponse>> login(@Valid @RequestBody AuthLoginRequest request) {
         AuthSession session = authService.login(request);
+        logger.info("User {} logged in successfully.");
         return ResponseEntity.ok()
                 .header("X-Session-Token", session.getToken())
                 .body(ApiResponse.of(session.getUsuario(), "Login exitoso."));

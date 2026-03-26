@@ -11,9 +11,15 @@ final class TecnicoSearchUtil {
     private static final int DEFAULT_LIMIT = 20;
     private static final int MAX_LIMIT = 100;
 
+    /**
+     * Utility class; evita instanciacion.
+     */
     private TecnicoSearchUtil() {
     }
 
+    /**
+     * Filtra y ordena resultados de tecnicos por relevancia, aplicando limite.
+     */
     static List<Map<String, Object>> filterAndLimit(List<Map<String, Object>> source, String query, Integer limit) {
         if (source == null || source.isEmpty()) {
             return Collections.emptyList();
@@ -61,6 +67,9 @@ final class TecnicoSearchUtil {
         return result;
     }
 
+    /**
+     * Resuelve limite efectivo usando defaults y tope maximo.
+     */
     private static int resolveLimit(Integer limit) {
         if (limit == null || limit <= 0) {
             return DEFAULT_LIMIT;
@@ -68,6 +77,9 @@ final class TecnicoSearchUtil {
         return Math.min(limit, MAX_LIMIT);
     }
 
+    /**
+     * Calcula puntaje de relevancia del termino contra campos primario/secundario.
+     */
     private static int score(String term, String primary, String secondary) {
         if (primary.startsWith(term)) {
             return 0;
@@ -84,6 +96,9 @@ final class TecnicoSearchUtil {
         return -1;
     }
 
+    /**
+     * Obtiene el primer valor encontrado entre claves candidatas.
+     */
     private static String firstValue(Map<String, Object> row, String... candidates) {
         if (row == null || row.isEmpty()) {
             return "";
@@ -99,6 +114,9 @@ final class TecnicoSearchUtil {
         return "";
     }
 
+    /**
+     * Normaliza clave de columna para comparacion case-insensitive.
+     */
     private static String normalizeKey(String key) {
         if (key == null) {
             return "";
@@ -106,6 +124,9 @@ final class TecnicoSearchUtil {
         return key.replace("_", "").toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Normaliza texto para busqueda.
+     */
     private static String normalize(String value) {
         if (value == null) {
             return "";
@@ -113,11 +134,17 @@ final class TecnicoSearchUtil {
         return value.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Contenedor interno con fila y metadatos de ordenamiento.
+     */
     private static final class Candidate {
         private final Map<String, Object> row;
         private final int score;
         private final String sortKey;
 
+        /**
+         * Crea candidato para ranking de busqueda.
+         */
         private Candidate(Map<String, Object> row, int score, String sortKey) {
             this.row = row;
             this.score = score;

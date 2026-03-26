@@ -50,6 +50,9 @@ public class AuthService {
     private final String sucreLoginPassword;
     private final boolean validarSucursal;
 
+    /**
+     * Inicializa el servicio de autenticacion y resuelve configuracion de conexiones.
+     */
     public AuthService(
             AuthRepository authRepository,
             SucursalRepository sucursalRepository,
@@ -81,6 +84,9 @@ public class AuthService {
         this.validarSucursal = validarSucursal;
     }
 
+    /**
+     * Ejecuta login: valida credenciales por SP, crea token y registra sesion en memoria.
+     */
     public AuthSession login(AuthLoginRequest request) {
         logger.info(
                 "Login attempt usuario={}, idSucursal={}, validarSucursal={}",
@@ -171,6 +177,9 @@ public class AuthService {
         return session;
     }
 
+    /**
+     * Devuelve el catalogo de sucursales disponibles para autenticacion.
+     */
     public List<SucursalResponse> listarSucursales() {
         List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
         List<SucursalResponse> result = new ArrayList<>();
@@ -181,6 +190,9 @@ public class AuthService {
         return result;
     }
 
+    /**
+     * Valida token de sesion y retorna datos de usuario autenticado.
+     */
     public AuthMeResponse me(String token) {
         if (token == null || isBlank(token)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_REQUIRED", "SesiÃ³n requerida.");
@@ -196,6 +208,9 @@ public class AuthService {
         return new AuthMeResponse(session.getUsuario(), session.getExpira());
     }
 
+    /**
+     * Exige sesion valida y que el usuario tenga rol administrador.
+     */
     public AuthMeResponse requireAdmin(String token) {
         AuthMeResponse me = me(token);
         if (!esAdministrador(me.getUsuario())) {
@@ -208,6 +223,9 @@ public class AuthService {
         return me;
     }
 
+    /**
+     * Determina si un usuario pertenece al rol de Sistemas (administrador).
+     */
     public boolean esAdministrador(AuthLoginResponse usuario) {
         if (usuario == null) {
             return false;
@@ -216,6 +234,9 @@ public class AuthService {
         return idRol != null && idRol == ROL_ID_SISTEMAS;
     }
 
+    /**
+     * Mapea una fila devuelta por el SP de login a un DTO de respuesta.
+     */
     private AuthLoginResponse mapToResponse(Map<String, Object> row, Integer idSucursalFallback) {
         Integer idUsuario = toInteger(findValue(row, "idusuario", "id_usuario", "iduser", "usuarioid"));
         Integer idRol = toInteger(findValue(row, "idrol", "id_rol", "rolid"));
@@ -239,6 +260,9 @@ public class AuthService {
         return new AuthLoginResponse(idUsuario, nombre, rol, idRol, idSucursal);
     }
 
+    /**
+     * Busca y valida la sucursal seleccionada por id.
+     */
     private SucursalInfo obtenerSucursalPorId(Integer idSucursal) {
         if (idSucursal == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSucursal es requerido.");
@@ -253,6 +277,9 @@ public class AuthService {
         throw new ApiException(HttpStatus.BAD_REQUEST, "SUCURSAL_NOT_FOUND", "Sucursal no encontrada.");
     }
 
+    /**
+     * Convierte una fila de sucursal en una estructura interna normalizada.
+     */
     private SucursalInfo mapToSucursal(Map<String, Object> row) {
         Integer idSucursal = toInteger(findValue(row, "idsucursal", "id_sucursal"));
         String sucursal = toString(findValue(row, "sucursal"));
@@ -274,6 +301,9 @@ public class AuthService {
         return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos));
     }
 
+    /**
+     * Resuelve host/base de datos final para autenticar segun sucursal (Sucre u operativa).
+     */
     private SucursalInfo resolverDestinoLogin(SucursalInfo sucursalOriginal) {
         if (sucursalOriginal == null) {
             return sucursalOriginal;
@@ -302,6 +332,9 @@ public class AuthService {
         );
     }
 
+    /**
+     * Crea un JdbcTemplate apuntando a la sucursal de login.
+     */
     private JdbcTemplate crearJdbcTemplateSucursal(SucursalInfo sucursal, String username, String password) {
         logger.debug(
                 "Creating JDBC connection for sucursal host={} baseDeDatos={}",
@@ -317,6 +350,9 @@ public class AuthService {
         );
     }
 
+    /**
+     * Ejecuta el SP de validacion segun la bandera validarSucursal.
+     */
     private List<Map<String, Object>> ejecutarValidacion(
             JdbcTemplate template,
             AuthLoginRequest request,
@@ -336,6 +372,9 @@ public class AuthService {
         return authRepository.validarUsuario(template, request.getUsuario(), passwordHash);
     }
 
+    /**
+     * Reintenta la validacion con el SP alternativo si el primero no existe.
+     */
     private List<Map<String, Object>> ejecutarValidacionConSpAlternativo(
             JdbcTemplate template,
             AuthLoginRequest request,
@@ -358,6 +397,9 @@ public class AuthService {
         }
     }
 
+    /**
+     * Genera hash MD5 en Base64 para comparar password con SP legacy.
+     */
     private String hashMd5Base64(String value) {
         if (value == null) {
             return null;
@@ -375,6 +417,9 @@ public class AuthService {
         }
     }
 
+    /**
+     * Busca valor en un map por multiples nombres de columna equivalentes.
+     */
     private Object findValue(Map<String, Object> row, String... candidates) {
         Map<String, Object> normalized = new HashMap<>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
@@ -390,10 +435,16 @@ public class AuthService {
         return null;
     }
 
+    /**
+     * Normaliza una clave de columna removiendo guiones bajos y usando minusculas.
+     */
     private String normalize(String key) {
         return key == null ? "" : key.replace("_", "").toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Normaliza texto removiendo tildes y pasando a minusculas.
+     */
     private String normalizeText(String value) {
         if (value == null) {
             return "";
@@ -403,6 +454,9 @@ public class AuthService {
         return normalized.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Convierte un valor generico a Integer de forma segura.
+     */
     private Integer toInteger(Object value) {
         if (value == null) {
             return null;
@@ -417,14 +471,23 @@ public class AuthService {
         }
     }
 
+    /**
+     * Convierte un valor generico a String.
+     */
     private String toString(Object value) {
         return value == null ? null : value.toString();
     }
 
+    /**
+     * Verifica si un texto es nulo o vacio tras trim.
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
 
+    /**
+     * Devuelve el primer texto no vacio, priorizando preferred.
+     */
     private String firstNonBlank(String preferred, String fallback) {
         if (!isBlank(preferred)) {
             return preferred.trim();
@@ -432,10 +495,16 @@ public class AuthService {
         return fallback;
     }
 
+    /**
+     * Identifica si el nombre normalizado corresponde a la sucursal Sucre.
+     */
     private boolean isSucre(String value) {
         return value != null && value.contains("sucre");
     }
 
+    /**
+     * Retorna null cuando el texto llega vacio; en otro caso retorna trim.
+     */
     private String trimToNull(String value) {
         if (value == null) {
             return null;
@@ -444,6 +513,9 @@ public class AuthService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * Extrae host desde un JDBC URL soportando formatos jtds y sqlserver.
+     */
     private String parseHostFromJdbcUrl(String jdbcUrl) {
         if (isBlank(jdbcUrl)) {
             return null;
@@ -477,6 +549,9 @@ public class AuthService {
         return host.isEmpty() ? null : host;
     }
 
+    /**
+     * Extrae nombre de base desde un JDBC URL.
+     */
     private String parseDatabaseFromJdbcUrl(String jdbcUrl) {
         if (isBlank(jdbcUrl)) {
             return null;
@@ -506,6 +581,9 @@ public class AuthService {
         return db.isEmpty() ? null : db;
     }
 
+    /**
+     * Detecta si la excepcion representa "stored procedure no encontrado".
+     */
     private boolean isMissingStoredProcedure(DataAccessException ex) {
         Throwable root = ex;
         while (root.getCause() != null) {
@@ -525,6 +603,9 @@ public class AuthService {
         return false;
     }
 
+    /**
+     * Limpia texto para uso en logs.
+     */
     private String safe(String value) {
         if (value == null) {
             return null;
@@ -538,6 +619,9 @@ public class AuthService {
         private final String host;
         private final String baseDeDatos;
 
+        /**
+         * Estructura interna para transportar datos de sucursal ya resueltos.
+         */
         private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos) {
             this.idSucursal = idSucursal;
             this.sucursal = sucursal;
