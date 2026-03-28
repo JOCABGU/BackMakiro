@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaWebRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaWebResponse;
@@ -317,7 +318,7 @@ public class ConformacionCuadrillaWebService {
         out.setAuxiliar(in.getAuxiliar());
         out.setIdUsuarioSupervisor(in.getIdUsuarioSupervisor());
         out.setSupervisorACargo(in.getSupervisorACargo());
-        out.setSucursal(in.getSucursal());
+        out.setSucursal(SucursalCanonicalizer.canonicalize(in.getSucursal()));
         out.setObservacion(in.getObservacion());
         out.setIdUsuarioRegistra(in.getIdUsuarioRegistra());
         return out;
@@ -345,13 +346,16 @@ public class ConformacionCuadrillaWebService {
         ConformacionCuadrillaWebResponse out = new ConformacionCuadrillaWebResponse();
         out.setId(toLong(readValue(row, "id", "id_ruta", "idruta", "Id_Ruta")));
         out.setFecha(fecha);
+        out.setActividad(resolverActividadDesdeRuta(row));
         out.setIdTecnico(toInteger(readValue(row, "id_tecnico", "idtecnico", "id_vendedor", "Id_Vendedor")));
         out.setTecnico(toString(readValue(row, "tecnico", "nombrevendedor", "vendedor", "nombre")));
         out.setGrupo(toString(readValue(row, "grupo", "cuadrilla", "ruta", "nombre", "Nombre")));
         out.setVehiculo(toString(readValue(row, "vehiculo", "Vehiculo", "placa", "placaVehiculo")));
         out.setAlmacen(toString(readValue(row, "almacen", "almacen_tigo", "almacenTigo", "BodegaTigo")));
         out.setGrupoDigitacion(toString(readValue(row, "grupoDigitacion", "grupodigitacion")));
-        out.setSucursal(isBlank(sucursal) ? toString(readValue(row, "sucursal", "Sucursal")) : sucursal);
+        out.setSucursal(SucursalCanonicalizer.canonicalize(
+                isBlank(sucursal) ? toString(readValue(row, "sucursal", "Sucursal")) : sucursal
+        ));
         out.setEEliminado(toBoolean(readValue(row, "e_eliminado", "eeliminado", "eliminado", "E_Eliminado")));
         return out;
     }
@@ -369,6 +373,28 @@ public class ConformacionCuadrillaWebService {
             }
         }
         return null;
+    }
+
+    private String resolverActividadDesdeRuta(Map<String, Object> row) {
+        String actividad = toUpperTrim(readValue(row, "actividad", "tipoactividad", "tipo"));
+        if ("BACKUP".equals(actividad)) {
+            return "BACKUP";
+        }
+        if ("TITULAR".equals(actividad)) {
+            return "TITULAR";
+        }
+        return "TITULAR";
+    }
+
+    private String toUpperTrim(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        return text.toUpperCase(Locale.ROOT);
     }
 
     private String normalizeKey(String key) {
@@ -435,7 +461,7 @@ public class ConformacionCuadrillaWebService {
      */
     private String resolveSucursalNombre(String sucursal, String token) {
         if (!isBlank(sucursal)) {
-            return sucursal.trim();
+            return SucursalCanonicalizer.canonicalize(sucursal);
         }
         if (isBlank(token)) {
             return null;
@@ -450,10 +476,10 @@ public class ConformacionCuadrillaWebService {
         List<SucursalResponse> sucursales = authService.listarSucursales();
         for (SucursalResponse item : sucursales) {
             if (item != null && idSucursal.equals(item.getIdSucursal())) {
-                return item.getSucursal();
+                return SucursalCanonicalizer.canonicalize(item.getSucursal());
             }
         }
-        return String.valueOf(idSucursal);
+        return SucursalCanonicalizer.canonicalize(String.valueOf(idSucursal));
     }
 
     /**

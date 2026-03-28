@@ -1,7 +1,9 @@
 package com.example.TigoStarSystem.supervisor.service;
 
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateRequest;
+import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRelacionRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.repository.ConformacionCuadrillaRepository;
 import org.springframework.http.HttpStatus;
@@ -202,6 +204,9 @@ public class ConformacionCuadrillaService {
         List<Map<String, Object>> confirmadas = repository.listar(fechaConsulta, sucursal, null, null);
         Map<Integer, Map<String, Object>> historicoByTecnico = indexUltimaConfirmacionPorTecnico(fechaConsulta, sucursal);
         Map<Integer, Map<String, Object>> tecnicosById = rowMapper.indexTecnicosById(repository.listarTecnicos(sucursal));
+        Map<Integer, Map<String, Object>> relacionesByRuta = indexRelacionesByRuta(sucursal);
+        Map<Integer, String> auxiliaresById = indexAuxiliaresById();
+        Map<Integer, String> digitadoresById = indexDigitadoresById();
 
         Set<String> clavesConfirmadas = obtenerClavesConfirmadas(confirmadas);
         List<Map<String, Object>> pendientes = new ArrayList<>();
@@ -226,6 +231,20 @@ public class ConformacionCuadrillaService {
                     aplicarSugerenciasDesdeHistorico(pendiente, historico);
                 }
             }
+            Integer idRuta = valueAsInteger(getCaseInsensitive(
+                    pendiente,
+                    "idRuta",
+                    "id_ruta",
+                    "idruta",
+                    "Id_Ruta"
+            ));
+            if (idRuta != null) {
+                Map<String, Object> relacion = relacionesByRuta.get(idRuta);
+                if (relacion != null) {
+                    aplicarRelacionCuadrilla(pendiente, relacion);
+                }
+            }
+            completarAsignacionesPendiente(pendiente, auxiliaresById, digitadoresById);
             pendientes.add(pendiente);
         }
 
@@ -252,9 +271,12 @@ public class ConformacionCuadrillaService {
             String q,
             Integer limit) {
         LocalDate fechaConsulta = resolverFecha(fecha);
-        List<Map<String, Object>> rows = repository.listar(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> rows = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
             out.add(rowMapper.mapConfirmada(row, sucursal, fechaConsulta));
         }
         return rowMapper.filtrarPorTextoYLimite(
@@ -282,7 +304,7 @@ public class ConformacionCuadrillaService {
             String q,
             Integer limit) {
         LocalDate fechaConsulta = resolverFecha(fecha);
-        List<Map<String, Object>> rows = repository.listarConEliminados(fechaConsulta, sucursal, null, null);
+        List<Map<String, Object>> rows = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
         List<Map<String, Object>> out = new ArrayList<>();
 
         for (Map<String, Object> row : rows) {
@@ -327,6 +349,14 @@ public class ConformacionCuadrillaService {
             total += repository.guardarFilaConfirmada(fila);
         }
 
+        if (total <= 0) {
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "INSERT_FAILED",
+                    "No se pudo guardar la cuadrilla en BDControlOrdenes."
+            );
+        }
+
         enviarCorreoCuadrillasNoConfirmadas(request.getFilas());
         return total;
     }
@@ -344,6 +374,31 @@ public class ConformacionCuadrillaService {
             enviarCorreoCuadrillasNoConfirmadas(filas);
         }
         return affected;
+    }
+
+    /**
+     * Guarda o actualiza la relacion de una ruta con auxiliar/digitador.
+     */
+    public int guardarRelacionCuadrilla(ConformacionCuadrillaRelacionRequest request) {
+        validarRelacionCuadrillaRequest(request);
+        request.setSucursal(SucursalCanonicalizer.canonicalize(toTrimmedString(request.getSucursal())));
+        request.setAuxiliar(toTrimmedString(request.getAuxiliar()));
+        request.setDigitador(toTrimmedString(request.getDigitador()));
+        if (request.getActivo() == null) {
+            request.setActivo(true);
+        }
+
+        Map<Integer, String> auxiliaresById = indexAuxiliaresById();
+        Map<Integer, String> digitadoresById = indexDigitadoresById();
+
+        if (isBlankValue(request.getAuxiliar()) && request.getIdTecnicoAuxiliar() != null) {
+            request.setAuxiliar(toTrimmedString(auxiliaresById.get(request.getIdTecnicoAuxiliar())));
+        }
+        if (isBlankValue(request.getDigitador()) && request.getIdUsuarioDigitador() != null) {
+            request.setDigitador(toTrimmedString(digitadoresById.get(request.getIdUsuarioDigitador())));
+        }
+
+        return repository.guardarRelacionCuadrilla(request);
     }
 
     /**
@@ -477,6 +532,185 @@ public class ConformacionCuadrillaService {
     }
 
     /**
+     * Aplica asignaciones desde tabla de relacion de cuadrillas.
+     */
+    private void aplicarRelacionCuadrilla(Map<String, Object> pendiente, Map<String, Object> relacion) {
+        if (pendiente == null || pendiente.isEmpty() || relacion == null || relacion.isEmpty()) {
+            return;
+        }
+
+        setWithAliases(
+                pendiente,
+                getCaseInsensitive(relacion, "id_tecnico_auxiliar", "idtecnicoauxiliar", "idTecnicoAuxiliar"),
+                "idTecnicoAuxiliar",
+                "id_tecnicoAuxiliar",
+                "id_tecnico_auxiliar",
+                "idtecnicoauxiliar"
+        );
+        setWithAliases(
+                pendiente,
+                getCaseInsensitive(relacion, "auxiliar"),
+                "auxiliar"
+        );
+        setWithAliases(
+                pendiente,
+                getCaseInsensitive(relacion, "id_usuario_digitador", "idusuariodigitador", "idUsuarioDigitador"),
+                "idUsuarioDigitador",
+                "id_usuario_digitador",
+                "idusuariodigitador"
+        );
+        setWithAliases(
+                pendiente,
+                getCaseInsensitive(relacion, "digitador"),
+                "digitador"
+        );
+    }
+
+    /**
+     * Completa auxiliar y digitador en pendientes usando catalogos por id.
+     * Si no hay coincidencia, usa literal para evitar campos en blanco.
+     */
+    private void completarAsignacionesPendiente(
+            Map<String, Object> pendiente,
+            Map<Integer, String> auxiliaresById,
+            Map<Integer, String> digitadoresById) {
+        if (pendiente == null || pendiente.isEmpty()) {
+            return;
+        }
+
+        Object auxiliarActual = getCaseInsensitive(pendiente, "auxiliar");
+        if (isBlankValue(auxiliarActual)) {
+            Integer idAuxiliar = valueAsInteger(getCaseInsensitive(
+                    pendiente,
+                    "idTecnicoAuxiliar",
+                    "id_tecnicoAuxiliar",
+                    "idtecnicoauxiliar",
+                    "id_tecnico_auxiliar"
+            ));
+            String auxiliar = idAuxiliar == null ? null : auxiliaresById.get(idAuxiliar);
+            if (isBlankValue(auxiliar)) {
+                auxiliar = "SIN ASIGNAR";
+            }
+            setIfBlankWithAliases(pendiente, auxiliar, "auxiliar");
+        }
+
+        Object digitadorActual = getCaseInsensitive(pendiente, "digitador");
+        if (isBlankValue(digitadorActual)) {
+            Integer idDigitador = valueAsInteger(getCaseInsensitive(
+                    pendiente,
+                    "idUsuarioDigitador",
+                    "id_usuario_digitador",
+                    "idusuariodigitador"
+            ));
+            String digitador = idDigitador == null ? null : digitadoresById.get(idDigitador);
+            if (isBlankValue(digitador)) {
+                digitador = "SIN ASIGNAR";
+            }
+            setIfBlankWithAliases(pendiente, digitador, "digitador");
+        }
+    }
+
+    /**
+     * Indexa auxiliares por id desde catalogo de tecnicos auxiliares.
+     */
+    private Map<Integer, String> indexAuxiliaresById() {
+        return indexNombreById(
+                repository.listarAuxiliares(),
+                new String[] {
+                        "idTecnicoAuxiliar",
+                        "id_tecnicoAuxiliar",
+                        "idtecnicoauxiliar",
+                        "id_tecnico_auxiliar",
+                        "id_tecnico",
+                        "idtecnico",
+                        "id_vendedor",
+                        "idvendedor",
+                        "Id_TecnicoAuxiliar",
+                        "Id_Tecnico",
+                        "Id_Vendedor"
+                },
+                new String[] {
+                        "auxiliar",
+                        "tecnicoauxiliar",
+                        "nombreauxiliar",
+                        "tecnico",
+                        "nombrevendedor",
+                        "vendedor",
+                        "nombre",
+                        "NombreAuxiliar",
+                        "Nombre"
+                }
+        );
+    }
+
+    /**
+     * Indexa digitadores por id desde catalogo de digitadores.
+     */
+    private Map<Integer, String> indexDigitadoresById() {
+        return indexNombreById(
+                repository.listarDigitadores(),
+                new String[] {
+                        "idUsuarioDigitador",
+                        "id_usuario_digitador",
+                        "idusuariodigitador",
+                        "id_usuario",
+                        "idusuario",
+                        "Id_UsuarioDigitador",
+                        "Id_Usuario"
+                },
+                new String[] {
+                        "digitador",
+                        "nombredigitador",
+                        "usuarioDigitador",
+                        "nombre",
+                        "NombreDigitador",
+                        "Nombre"
+                }
+        );
+    }
+
+    /**
+     * Indexa relaciones de cuadrilla por id de ruta.
+     */
+    private Map<Integer, Map<String, Object>> indexRelacionesByRuta(String sucursal) {
+        Map<Integer, Map<String, Object>> out = new HashMap<>();
+        List<Map<String, Object>> rows = repository.listarRelacionesCuadrilla(sucursal);
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer idRuta = valueAsInteger(getCaseInsensitive(row, "id_ruta", "idruta", "idRuta", "Id_Ruta"));
+            if (idRuta == null || out.containsKey(idRuta)) {
+                continue;
+            }
+            out.put(idRuta, row);
+        }
+        return out;
+    }
+
+    /**
+     * Construye indice id->nombre ignorando filas incompletas.
+     */
+    private Map<Integer, String> indexNombreById(
+            List<Map<String, Object>> rows,
+            String[] idKeys,
+            String[] nombreKeys) {
+        Map<Integer, String> out = new HashMap<>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer id = valueAsInteger(getCaseInsensitive(row, idKeys));
+            String nombre = toTrimmedString(getCaseInsensitive(row, nombreKeys));
+            if (id == null || isBlankValue(nombre) || out.containsKey(id)) {
+                continue;
+            }
+            out.put(id, nombre);
+        }
+        return out;
+    }
+
+    /**
      * Escribe valor en aliases solo cuando el campo actual esta vacio.
      */
     private void setIfBlankWithAliases(Map<String, Object> target, Object value, String... aliases) {
@@ -485,6 +719,18 @@ public class ConformacionCuadrillaService {
         }
         Object current = getCaseInsensitive(target, aliases);
         if (!isBlankValue(current)) {
+            return;
+        }
+        for (String alias : aliases) {
+            target.put(alias, value);
+        }
+    }
+
+    /**
+     * Escribe valor en aliases sin validar estado previo del campo destino.
+     */
+    private void setWithAliases(Map<String, Object> target, Object value, String... aliases) {
+        if (target == null || aliases == null || aliases.length == 0 || isBlankValue(value)) {
             return;
         }
         for (String alias : aliases) {
@@ -574,6 +820,47 @@ public class ConformacionCuadrillaService {
             return ((String) value).trim().isEmpty();
         }
         return false;
+    }
+
+    /**
+     * Convierte valor dinamico a texto con trim, devolviendo null si queda vacio.
+     */
+    private String toTrimmedString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    /**
+     * Valida request de relacion ruta->auxiliar/digitador.
+     */
+    private void validarRelacionCuadrillaRequest(ConformacionCuadrillaRelacionRequest request) {
+        if (request == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Request de relacion cuadrilla es requerido."
+            );
+        }
+        if (request.getIdRuta() == null || request.getIdRuta() <= 0) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idRuta es requerido."
+            );
+        }
+
+        boolean tieneAuxiliar = request.getIdTecnicoAuxiliar() != null || !isBlankValue(request.getAuxiliar());
+        boolean tieneDigitador = request.getIdUsuarioDigitador() != null || !isBlankValue(request.getDigitador());
+        if (!tieneAuxiliar && !tieneDigitador) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Debe enviar idTecnicoAuxiliar/auxiliar o idUsuarioDigitador/digitador."
+            );
+        }
     }
 
     /**

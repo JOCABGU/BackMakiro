@@ -3,6 +3,7 @@ package com.example.TigoStarSystem.supervisor.controller;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateResponse;
+import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRelacionRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.service.ConformacionCuadrillaService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -215,6 +216,16 @@ public class ConformacionCuadrillaController {
         return ResponseEntity.ok(ApiResponse.of(
                 filas,
                 "Conformacion de cuadrilla actualizada."
+        ));
+    }
+
+    @PostMapping({"/relaciones-cuadrilla", "/cuadrillas/relaciones"})
+    public ResponseEntity<ApiResponse<Integer>> guardarRelacionCuadrilla(
+            @RequestBody ConformacionCuadrillaRelacionRequest request) {
+        int filas = service.guardarRelacionCuadrilla(request);
+        return ResponseEntity.ok(ApiResponse.of(
+                filas,
+                "Relacion de cuadrilla guardada."
         ));
     }
 }

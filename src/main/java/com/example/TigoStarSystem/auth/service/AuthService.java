@@ -282,7 +282,7 @@ public class AuthService {
      */
     private SucursalInfo mapToSucursal(Map<String, Object> row) {
         Integer idSucursal = toInteger(findValue(row, "idsucursal", "id_sucursal"));
-        String sucursal = toString(findValue(row, "sucursal"));
+        String sucursal = canonicalizarSucursal(toString(findValue(row, "sucursal")));
         String ip = toString(findValue(row, "ip"));
         String ip2 = toString(findValue(row, "ip2"));
         String baseDeDatos = toString(findValue(row, "basededatos", "base_de_datos"));
@@ -299,6 +299,24 @@ public class AuthService {
             );
         }
         return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos));
+    }
+
+    /**
+     * Unifica variantes comunes de sucursal para evitar inconsistencias en el front.
+     */
+    private String canonicalizarSucursal(String value) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null) {
+            return null;
+        }
+        String normalized = normalizeText(trimmed).replaceAll("[\\s_\\-]+", "");
+        if ("santacruz".equals(normalized)) {
+            return "SantaCruz";
+        }
+        if ("sucre".equals(normalized)) {
+            return "Sucre";
+        }
+        return trimmed;
     }
 
     /**
