@@ -6,17 +6,30 @@ import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
+import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
 import com.example.TigoStarSystem.ot.repository.OtRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -139,6 +152,54 @@ public class OtService {
     }
 
     /**
+     * Registra una fila en tbl_venta mediante SP para flujo OT web.
+     */
+    public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
+            OtRegistrarVentaRequest request,
+            Integer idSucursalSesion) {
+        validarRegistroVentaRequest(request);
+        Integer idSucursalFinal = request.getIdSucursal() != null ? request.getIdSucursal() : idSucursalSesion;
+        if (idSucursalFinal == null || idSucursalFinal <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSucursal es requerido.");
+        }
+
+        try {
+            Map<String, Object> result = otRepository.registrarVentaParaRegistroOtWb(
+                    request.getIdUsuario(),
+                    request.getIdVendedor(),
+                    request.getIdGrupo(),
+                    request.getIdTipoServicio(),
+                    request.getOrdenTrabajo(),
+                    request.getObservacion(),
+                    request.getTotal(),
+                    request.getIdUsuarioE(),
+                    request.getEEliminado(),
+                    request.getNombre(),
+                    request.getOrigen(),
+                    request.getIdEstado(),
+                    idSucursalFinal,
+                    request.getCodigoCliente(),
+                    request.getTieneObservacion(),
+                    request.getLatitud(),
+                    request.getLongitud(),
+                    idSucursalSesion
+            );
+
+            return new OtRegistrarVentaResponse(
+                    toInteger(findValue(result, "Id_Venta", "id_venta", "idventa")),
+                    toInteger(findValue(result, "OrdenTrabajo", "orden_trabajo", "ot")),
+                    toInteger(findValue(result, "CodigoCliente", "codigo_cliente", "cliente_nro")),
+                    toInteger(findValue(result, "Id_Sucursal", "id_sucursal", "idsucursal")),
+                    asString(findValue(result, "Origen", "origen")),
+                    toBigDecimal(findValue(result, "Latitud", "latitud")),
+                    toBigDecimal(findValue(result, "Longitud", "longitud"))
+            );
+        } catch (DataAccessException ex) {
+            throw traducirErrorRegistroVenta(ex, request);
+        }
+    }
+
+    /**
      * Modifica datos basicos de OT; usa id path como fallback de numero de orden.
      */
     public int modificarDatosOt(Long idVentaPath, OtModificarDatosRequest request, Integer idSucursal) {
@@ -205,6 +266,65 @@ public class OtService {
             );
         }
         return otRepository.eliminarCodigoUsuarioVenta(idVenta, idUsuario, idSucursal);
+    }
+
+    /**
+     * Ejecuta el SP de cabecera de venta para registro OT web controlando errores conocidos.
+     */
+    public List<Map<String, Object>> obtenerCabeceraVentaParaRegistroOtWb(
+            Integer clienteNro,
+            Integer ot,
+            String tor,
+            String grupo,
+            String tecnicoNombre,
+            Integer idSucursal) {
+        validarCabeceraVentaParams(clienteNro, ot, tor, grupo, tecnicoNombre);
+        try {
+            List<Map<String, Object>> rows = otRepository.obtenerCabeceraVentaParaRegistroOtWb(
+                    clienteNro,
+                    ot,
+                    tor.trim(),
+                    grupo.trim(),
+                    tecnicoNombre.trim(),
+                    idSucursal
+            );
+            return normalizarCabeceraVentaRows(rows);
+        } catch (DataAccessException ex) {
+            throw traducirErrorCabeceraVenta(ex, clienteNro, ot, tor, grupo, tecnicoNombre);
+        }
+    }
+
+    /**
+     * Ejecuta el SP spx_ValidarVentaYDetallewb para validar existencia de venta y detalle.
+     */
+    public OtValidarVentaDetalleResponse validarVentaYDetalleWb(
+            String fecha,
+            Integer nroOT,
+            Integer numeroCliente,
+            Integer idSucursal) {
+        LocalDate fechaParsed = parseFechaFlexible(fecha);
+        validarMayorCero(nroOT, "nroOT");
+        validarMayorCero(numeroCliente, "numeroCliente");
+
+        try {
+            Map<String, Object> row = otRepository.validarVentaYDetalleWb(
+                    fechaParsed,
+                    nroOT,
+                    numeroCliente,
+                    idSucursal
+            );
+            return new OtValidarVentaDetalleResponse(
+                    toLocalDate(findValue(row, "Fecha", "fecha")),
+                    toInteger(findValue(row, "NroOT", "nroot")),
+                    toInteger(findValue(row, "NumeroCliente", "numerocliente", "codigoCliente")),
+                    toBoolean(findValue(row, "ExisteVenta", "existeventa")),
+                    toInteger(findValue(row, "CantidadVentas", "cantidadventas")),
+                    toBoolean(findValue(row, "TieneDetalleEnCodigoVenta", "tienedetalleencodigoventa")),
+                    toInteger(findValue(row, "CantidadDetalles", "cantidaddetalles"))
+            );
+        } catch (DataAccessException ex) {
+            throw traducirErrorValidarVentaDetalle(ex, fecha, nroOT, numeroCliente);
+        }
     }
 
     /**
@@ -503,5 +623,327 @@ public class OtService {
      */
     private ApiException notFound(String message) {
         return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", message);
+    }
+
+    private void validarRegistroVentaRequest(OtRegistrarVentaRequest request) {
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El cuerpo de la solicitud es requerido.");
+        }
+        validarMayorCero(request.getIdUsuario(), "idUsuario");
+        validarMayorCero(request.getIdVendedor(), "idVendedor");
+        validarMayorCero(request.getIdGrupo(), "idGrupo");
+        validarMayorCero(request.getIdTipoServicio(), "idTipoServicio");
+        validarMayorCero(request.getOrdenTrabajo(), "ordenTrabajo");
+        validarMayorCero(request.getIdEstado(), "idEstado");
+        validarMayorCero(request.getCodigoCliente(), "codigoCliente");
+        if (request.getNombre() == null || request.getNombre().trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "nombre es requerido.");
+        }
+        if (request.getOrigen() == null || request.getOrigen().trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "origen es requerido.");
+        }
+        if (request.getLatitud() != null
+                && (request.getLatitud().compareTo(new BigDecimal("-90")) < 0
+                || request.getLatitud().compareTo(new BigDecimal("90")) > 0)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "latitud fuera de rango (-90 a 90).");
+        }
+        if (request.getLongitud() != null
+                && (request.getLongitud().compareTo(new BigDecimal("-180")) < 0
+                || request.getLongitud().compareTo(new BigDecimal("180")) > 0)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "longitud fuera de rango (-180 a 180).");
+        }
+    }
+
+    private void validarMayorCero(Integer value, String field) {
+        if (value == null || value <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", field + " es requerido y debe ser mayor a 0.");
+        }
+    }
+
+    private ApiException traducirErrorRegistroVenta(DataAccessException ex, OtRegistrarVentaRequest request) {
+        Map<String, Object> details = new HashMap<>();
+        Throwable root = ex.getMostSpecificCause();
+        details.put("storedProcedure", "spx_RegistrarVentaParaRegistroOTwb");
+        details.put("rootCause", root == null ? ex.getMessage() : root.getMessage());
+        details.put("ordenTrabajo", request.getOrdenTrabajo());
+        details.put("codigoCliente", request.getCodigoCliente());
+
+        if (ex instanceof QueryTimeoutException || ex instanceof CannotAcquireLockException) {
+            return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "SP_TIMEOUT", "El procedimiento excedio el tiempo de espera.", details);
+        }
+        if (ex instanceof CannotGetJdbcConnectionException) {
+            return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "DB_CONNECTION_ERROR", "No se pudo conectar a la base de datos.", details);
+        }
+
+        SQLException sqlEx = findSqlException(ex);
+        if (sqlEx != null && sqlEx.getErrorCode() == 2812) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_NOT_FOUND", "No se encontro el procedimiento almacenado spx_RegistrarVentaParaRegistroOTwb.", details);
+        }
+        if (ex instanceof BadSqlGrammarException) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_SQL_ERROR", "Error SQL al ejecutar el procedimiento almacenado.", details);
+        }
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_EXECUTION_ERROR", "No se pudo ejecutar el procedimiento almacenado.", details);
+    }
+
+    private BigDecimal toBigDecimal(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof BigDecimal) {
+            return (BigDecimal) value;
+        }
+        if (value instanceof Number) {
+            return BigDecimal.valueOf(((Number) value).doubleValue());
+        }
+        try {
+            return new BigDecimal(String.valueOf(value).trim());
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private LocalDate parseFechaFlexible(String fecha) {
+        if (fecha == null || fecha.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "fecha es requerida.");
+        }
+        String value = fecha.trim();
+        DateTimeFormatter[] formatters = new DateTimeFormatter[] {
+                DateTimeFormatter.ISO_LOCAL_DATE,
+                DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                DateTimeFormatter.BASIC_ISO_DATE
+        };
+        for (DateTimeFormatter formatter : formatters) {
+            try {
+                return LocalDate.parse(value, formatter);
+            } catch (DateTimeParseException ignored) {
+                // Intentar con el siguiente formato.
+            }
+        }
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "fecha invalida. Use yyyy-MM-dd, dd/MM/yyyy o yyyyMMdd."
+        );
+    }
+
+    private LocalDate toLocalDate(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof java.sql.Date) {
+            return ((java.sql.Date) value).toLocalDate();
+        }
+        if (value instanceof LocalDate) {
+            return (LocalDate) value;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        DateTimeFormatter[] formatters = new DateTimeFormatter[] {
+                DateTimeFormatter.ISO_LOCAL_DATE,
+                DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                DateTimeFormatter.BASIC_ISO_DATE
+        };
+        for (DateTimeFormatter formatter : formatters) {
+            try {
+                return LocalDate.parse(text, formatter);
+            } catch (DateTimeParseException ignored) {
+                // Intentar con el siguiente formato.
+            }
+        }
+        return null;
+    }
+
+    private void validarCabeceraVentaParams(
+            Integer clienteNro,
+            Integer ot,
+            String tor,
+            String grupo,
+            String tecnicoNombre) {
+        if (clienteNro == null || clienteNro <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "clienteNro es requerido y debe ser mayor a 0.");
+        }
+        if (ot == null || ot <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "ot es requerido y debe ser mayor a 0.");
+        }
+        if (tor == null || tor.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tor es requerido.");
+        }
+        if (grupo == null || grupo.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "grupo es requerido.");
+        }
+        if (tecnicoNombre == null || tecnicoNombre.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tecnicoNombre es requerido.");
+        }
+    }
+
+    private ApiException traducirErrorCabeceraVenta(
+            DataAccessException ex,
+            Integer clienteNro,
+            Integer ot,
+            String tor,
+            String grupo,
+            String tecnicoNombre) {
+        Map<String, Object> details = new HashMap<>();
+        Throwable root = ex.getMostSpecificCause();
+        String rootMessage = root == null ? ex.getMessage() : root.getMessage();
+        details.put("storedProcedure", "spx_ObtenerCaberaVentaParaRegistroOTwb");
+        details.put("clienteNro", clienteNro);
+        details.put("ot", ot);
+        details.put("tor", tor);
+        details.put("grupo", grupo);
+        details.put("tecnicoNombre", tecnicoNombre);
+        details.put("rootCause", rootMessage);
+
+        if (ex instanceof QueryTimeoutException || ex instanceof CannotAcquireLockException) {
+            return new ApiException(
+                    HttpStatus.GATEWAY_TIMEOUT,
+                    "SP_TIMEOUT",
+                    "El procedimiento excedio el tiempo de espera.",
+                    details
+            );
+        }
+        if (ex instanceof CannotGetJdbcConnectionException) {
+            return new ApiException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "DB_CONNECTION_ERROR",
+                    "No se pudo conectar a la base de datos.",
+                    details
+            );
+        }
+
+        SQLException sqlEx = findSqlException(ex);
+        if (sqlEx != null && sqlEx.getErrorCode() == 2812) {
+            return new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SP_NOT_FOUND",
+                    "No se encontro el procedimiento almacenado spx_ObtenerCaberaVentaParaRegistroOTwb.",
+                    details
+            );
+        }
+        if (ex instanceof BadSqlGrammarException) {
+            return new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SP_SQL_ERROR",
+                    "Error SQL al ejecutar el procedimiento almacenado.",
+                    details
+            );
+        }
+
+        return new ApiException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "SP_EXECUTION_ERROR",
+                "No se pudo ejecutar el procedimiento almacenado.",
+                details
+        );
+    }
+
+    private ApiException traducirErrorValidarVentaDetalle(
+            DataAccessException ex,
+            String fecha,
+            Integer nroOT,
+            Integer numeroCliente) {
+        Map<String, Object> details = new HashMap<>();
+        Throwable root = ex.getMostSpecificCause();
+        details.put("storedProcedure", "spx_ValidarVentaYDetallewb");
+        details.put("fecha", fecha);
+        details.put("nroOT", nroOT);
+        details.put("numeroCliente", numeroCliente);
+        details.put("rootCause", root == null ? ex.getMessage() : root.getMessage());
+
+        if (ex instanceof QueryTimeoutException || ex instanceof CannotAcquireLockException) {
+            return new ApiException(
+                    HttpStatus.GATEWAY_TIMEOUT,
+                    "SP_TIMEOUT",
+                    "El procedimiento excedio el tiempo de espera.",
+                    details
+            );
+        }
+        if (ex instanceof CannotGetJdbcConnectionException) {
+            return new ApiException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "DB_CONNECTION_ERROR",
+                    "No se pudo conectar a la base de datos.",
+                    details
+            );
+        }
+
+        SQLException sqlEx = findSqlException(ex);
+        if (sqlEx != null && sqlEx.getErrorCode() == 2812) {
+            return new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SP_NOT_FOUND",
+                    "No se encontro el procedimiento almacenado spx_ValidarVentaYDetallewb.",
+                    details
+            );
+        }
+        if (ex instanceof BadSqlGrammarException) {
+            return new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SP_SQL_ERROR",
+                    "Error SQL al ejecutar el procedimiento almacenado.",
+                    details
+            );
+        }
+        return new ApiException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "SP_EXECUTION_ERROR",
+                "No se pudo ejecutar el procedimiento almacenado.",
+                details
+        );
+    }
+
+    private SQLException findSqlException(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            if (current instanceof SQLException) {
+                return (SQLException) current;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
+    private List<Map<String, Object>> normalizarCabeceraVentaRows(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> normalized = new LinkedHashMap<>();
+            if (row != null) {
+                normalized.putAll(row);
+            }
+
+            Object idGrupo = findValue(row, "IdGrupo", "idGrupo", "id_grupo");
+            Object idRuta = findValue(row, "IdRuta", "idRuta", "id_ruta");
+            if (idRuta == null && idGrupo != null) {
+                normalized.put("idRuta", idGrupo);
+                normalized.put("IdRuta", idGrupo);
+            }
+            if (idGrupo == null && idRuta != null) {
+                normalized.put("idGrupo", idRuta);
+                normalized.put("IdGrupo", idRuta);
+            }
+
+            Object nombreGrupo = findValue(row, "NombreGrupo", "nombreGrupo", "nombre_grupo");
+            Object nombreRuta = findValue(row, "NombreRuta", "nombreRuta", "nombre_ruta");
+            if (nombreRuta == null && nombreGrupo != null) {
+                normalized.put("NombreRuta", nombreGrupo);
+                normalized.put("nombreRuta", nombreGrupo);
+            }
+            if (nombreGrupo == null && nombreRuta != null) {
+                normalized.put("NombreGrupo", nombreRuta);
+                normalized.put("nombreGrupo", nombreRuta);
+            }
+
+            out.add(normalized);
+        }
+        return out;
     }
 }

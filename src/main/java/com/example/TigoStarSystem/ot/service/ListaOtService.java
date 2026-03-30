@@ -25,8 +25,9 @@ public class ListaOtService {
             LocalDate fecha,
             String tecnico,
             boolean tecnicoExacto,
-            List<String> estadosSeleccionados) {
-        List<Map<String, Object>> rows = repository.listarPorFecha(fecha);
+            List<String> estadosSeleccionados,
+            Integer idSucursal) {
+        List<Map<String, Object>> rows = repository.listarPorFecha(fecha, tecnico, idSucursal);
         if (rows == null || rows.isEmpty()) {
             return rows;
         }
@@ -128,4 +129,3 @@ public class ListaOtService {
         return value == null ? null : value.toString();
     }
 }
-

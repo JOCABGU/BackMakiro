@@ -61,7 +61,8 @@ public class ListaOtController {
                 fecha,
                 tecnicoFiltro,
                 tecnicoExacto,
-                estadosFiltro
+                estadosFiltro,
+                extractIdSucursal(me)
         );
         return ResponseEntity.ok(ApiResponse.of(data, "Listado de OT (SP BO CITA MAKIRO)."));
     }
@@ -71,6 +72,13 @@ public class ListaOtController {
             return null;
         }
         return authService.me(token);
+    }
+
+    private Integer extractIdSucursal(AuthMeResponse me) {
+        if (me == null || me.getUsuario() == null) {
+            return null;
+        }
+        return me.getUsuario().getIdSucursal();
     }
 
     private String resolveRol(AuthMeResponse me, String rolParam) {

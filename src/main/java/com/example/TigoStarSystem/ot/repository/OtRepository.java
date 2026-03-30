@@ -149,6 +149,36 @@ public class OtRepository {
         );
     }
 
+    public List<Map<String, Object>> obtenerCabeceraVentaParaRegistroOtWb(
+            Integer clienteNro,
+            Integer ot,
+            String tor,
+            String grupo,
+            String tecnicoNombre,
+            Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spx_ObtenerCaberaVentaParaRegistroOTwb ?, ?, ?, ?, ?",
+                clienteNro,
+                ot,
+                tor,
+                grupo,
+                tecnicoNombre
+        );
+    }
+
+    public Map<String, Object> validarVentaYDetalleWb(
+            LocalDate fecha,
+            Integer nroOT,
+            Integer numeroCliente,
+            Integer idSucursal) {
+        return template(idSucursal).queryForMap(
+                "EXEC dbo.spx_ValidarVentaYDetallewb ?, ?, ?",
+                sqlDate(fecha),
+                nroOT,
+                numeroCliente
+        );
+    }
+
     public Map<String, Object> registrarOt(
             Integer idUsuario,
             Integer idRuta,
@@ -172,6 +202,48 @@ public class OtRepository {
                 tieneObservacion == null ? Boolean.FALSE : tieneObservacion,
                 idSucursal,
                 nombreCliente
+        );
+    }
+
+    public Map<String, Object> registrarVentaParaRegistroOtWb(
+            Integer idUsuario,
+            Integer idVendedor,
+            Integer idGrupo,
+            Integer idTipoServicio,
+            Integer ordenTrabajo,
+            String observacion,
+            java.math.BigDecimal total,
+            Integer idUsuarioE,
+            Boolean eEliminado,
+            String nombre,
+            String origen,
+            Integer idEstado,
+            Integer idSucursal,
+            Integer codigoCliente,
+            Boolean tieneObservacion,
+            java.math.BigDecimal latitud,
+            java.math.BigDecimal longitud,
+            Integer idSucursalSesion
+    ) {
+        return template(idSucursalSesion).queryForMap(
+                "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                idUsuario,
+                idVendedor,
+                idGrupo,
+                idTipoServicio,
+                ordenTrabajo,
+                observacion,
+                total,
+                idUsuarioE,
+                eEliminado,
+                nombre,
+                origen,
+                idEstado,
+                idSucursal,
+                codigoCliente,
+                tieneObservacion,
+                latitud,
+                longitud
         );
     }
 

@@ -9,7 +9,10 @@ import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
+import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
 import com.example.TigoStarSystem.ot.service.OtService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -41,6 +44,14 @@ public class OtController {
             @Valid @RequestBody OtRealizadaRequest request) {
         int filas = otService.registrarOtRealizada(request, resolveIdSucursal(token));
         return ResponseEntity.ok(ApiResponse.of(filas, "OT actualizada como realizada."));
+    }
+
+    @PostMapping("/spx_RegistrarVentaParaRegistroOTwb")
+    public ResponseEntity<ApiResponse<OtRegistrarVentaResponse>> registrarVentaParaRegistroOtWb(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @Valid @RequestBody OtRegistrarVentaRequest request) {
+        OtRegistrarVentaResponse response = otService.registrarVentaParaRegistroOtWb(request, resolveIdSucursal(token));
+        return ResponseEntity.ok(ApiResponse.of(response, "Venta registrada correctamente."));
     }
 
     @PostMapping
@@ -110,7 +121,7 @@ public class OtController {
         );
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{id:\\d+}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerPorId(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @PathVariable("id") Long id) {
@@ -220,6 +231,44 @@ public class OtController {
                 "VALIDATION_ERROR",
                 "modo debe ser con_cu o solo_cu."
         );
+    }
+
+    @GetMapping({"/spx_ObtenerCaberaVentaParaRegistroOTwb", "/cabecera-venta/registro-otwb"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> obtenerCabeceraVentaParaRegistroOtWb(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam("clienteNro") Integer clienteNro,
+            @RequestParam("ot") Integer ot,
+            @RequestParam("tor") @NotBlank String tor,
+            @RequestParam("grupo") @NotBlank String grupo,
+            @RequestParam("tecnicoNombre") @NotBlank String tecnicoNombre) {
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.obtenerCabeceraVentaParaRegistroOtWb(
+                        clienteNro,
+                        ot,
+                        tor,
+                        grupo,
+                        tecnicoNombre,
+                        resolveIdSucursal(token)
+                ),
+                "Cabecera de venta obtenida correctamente."
+        ));
+    }
+
+    @GetMapping({"/spx_ValidarVentaYDetallewb", "/venta/validar-detalle"})
+    public ResponseEntity<ApiResponse<OtValidarVentaDetalleResponse>> validarVentaYDetalleWb(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam("fecha") String fecha,
+            @RequestParam("nroOT") Integer nroOT,
+            @RequestParam("numeroCliente") Integer numeroCliente) {
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.validarVentaYDetalleWb(
+                        fecha,
+                        nroOT,
+                        numeroCliente,
+                        resolveIdSucursal(token)
+                ),
+                "Validacion de venta y detalle ejecutada correctamente."
+        ));
     }
 
     private Integer resolveIdSucursal(String token) {
