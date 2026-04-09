@@ -8,6 +8,7 @@ import com.example.TigoStarSystem.ot.dto.OtCrearRequest;
 import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarCargoUsuarioRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
@@ -63,6 +64,19 @@ public class OtController {
             @RequestBody OtRegistrarDetalleAgendaRequest request) {
         OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, resolveIdSucursal(token));
         return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
+    }
+
+    @PostMapping("/cargo-usuario")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> registrarCargoUsuario(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestBody OtRegistrarCargoUsuarioRequest request) {
+        int filas = otService.registrarCargoUsuario(request, resolveIdSucursal(token));
+        Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("guardados", filas);
+        return ResponseEntity.ok(ApiResponse.of(
+                response,
+                "Cargo usuario registrado correctamente."
+        ));
     }
 
     @PostMapping
@@ -192,6 +206,28 @@ public class OtController {
         ));
     }
 
+    @GetMapping({"/spx_ObtenerSaldoRuta", "/saldo-ruta"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> obtenerSaldoRuta(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idRuta", required = false) Integer idRuta,
+            @RequestParam(value = "ruta", required = false) Integer ruta,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        Integer idRutaFinal = idRuta != null ? idRuta : ruta;
+        if (idRutaFinal == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idRuta o ruta es requerido."
+            );
+        }
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.obtenerSaldoRuta(idRutaFinal, fecha, resolveIdSucursal(token, idSucursal)),
+                "Saldo de ruta obtenido correctamente."
+        ));
+    }
+
     @PutMapping("/{id}/datos")
     public ResponseEntity<ApiResponse<Integer>> modificarDatos(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
@@ -300,12 +336,20 @@ public class OtController {
     }
 
     private Integer resolveIdSucursal(String token, Integer idSucursalFallback) {
+        if (idSucursalFallback != null && idSucursalFallback > 0) {
+            try {
+                Integer idSucursalSesion = resolveIdSucursal(token);
+                return idSucursalSesion != null ? idSucursalSesion : idSucursalFallback;
+            } catch (ApiException ex) {
+                if (isSesionNoDisponible(ex)) {
+                    return idSucursalFallback;
+                }
+                throw ex;
+            }
+        }
         Integer idSucursalSesion = resolveIdSucursal(token);
         if (idSucursalSesion != null) {
             return idSucursalSesion;
-        }
-        if (idSucursalFallback != null) {
-            return idSucursalFallback;
         }
         throw new ApiException(
                 HttpStatus.BAD_REQUEST,
@@ -326,6 +370,17 @@ public class OtController {
             return null;
         }
         return authService.me(token);
+    }
+
+    private boolean isSesionNoDisponible(ApiException ex) {
+        if (ex == null) {
+            return false;
+        }
+        if (ex.getStatus() == HttpStatus.UNAUTHORIZED) {
+            return true;
+        }
+        String code = ex.getCode();
+        return code != null && code.startsWith("SESSION_");
     }
 
     private boolean isBlank(String value) {

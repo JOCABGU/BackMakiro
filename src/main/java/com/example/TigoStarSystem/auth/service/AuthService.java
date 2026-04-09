@@ -21,6 +21,8 @@ import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -205,7 +207,17 @@ public class AuthService {
             sessions.remove(token);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "SesiÃ³n expirada.");
         }
-        return new AuthMeResponse(session.getUsuario(), session.getExpira());
+        return new AuthMeResponse(session.getUsuario(), session.getExpira(), resolveHostName());
+    }
+
+    private String resolveHostName() {
+        try {
+            String hostName = InetAddress.getLocalHost().getHostName();
+            return hostName == null ? null : hostName.trim();
+        } catch (UnknownHostException ex) {
+            logger.warn("No se pudo resolver el nombre del host para la sesion.", ex);
+            return null;
+        }
     }
 
     /**

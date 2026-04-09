@@ -107,6 +107,42 @@ public class OtRepository {
         );
     }
 
+    public Map<String, Object> obtenerOrdenTrabajoPorNumeroUnica(String numeroOrden, Integer idSucursal) {
+        List<Map<String, Object>> rows = obtenerOrdenTrabajoPorNumero(numeroOrden, idSucursal);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public List<Map<String, Object>> obtenerCargoUsuarioExistente(String serie, String chipId) {
+        boolean serieVacia = serie == null || serie.trim().isEmpty();
+        boolean chipVacio = chipId == null || chipId.trim().isEmpty();
+        if (serieVacia && chipVacio) {
+            return java.util.Collections.emptyList();
+        }
+        return jdbcTemplate.queryForList(
+                "SELECT TOP 1 Id FROM dbo.tbl_CodigoVentaCargoUsuario " +
+                        "WHERE E_Eliminado = 0 AND ((? <> '' AND Serial = ?) OR (? <> '' AND ChipId = ?))",
+                serie == null ? "" : serie,
+                serie == null ? "" : serie,
+                chipId == null ? "" : chipId,
+                chipId == null ? "" : chipId
+        );
+    }
+
+    public List<Map<String, Object>> obtenerSaldoRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spx_ObtenerSaldoRuta ?, ?",
+                idRuta,
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> obtenerSaldoRutaBasico(Integer idRuta, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spb_SaldoRutasCantidad_X_Ruta ?",
+                idRuta
+        );
+    }
+
     public int modificarOtRealizada(String observacion, Integer idEstado, String numeroOrden, Integer idSucursal) {
         return template(idSucursal).update(
                 "EXEC sp_ModificarOT_OTRealizada ?, ?, ?",
@@ -257,6 +293,55 @@ public class OtRepository {
         return key == null ? null : key.intValue();
     }
 
+    public Integer insertarCodigoVentaCargoUsuario(
+            Long idVenta,
+            Integer idProducto,
+            String serie,
+            String chipId,
+            Integer cantidad,
+            String existe,
+            Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        try {
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            target.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(
+                        "INSERT INTO dbo.tbl_CodigoVentaCargoUsuario " +
+                                "(Id_Venta, Id_Producto, Serial, ChipId, Cantidad, Existe, E_Eliminado) " +
+                                "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                        Statement.RETURN_GENERATED_KEYS
+                );
+                ps.setLong(1, idVenta);
+                ps.setInt(2, idProducto);
+                ps.setString(3, serie);
+                ps.setString(4, chipId);
+                ps.setInt(5, cantidad);
+                ps.setString(6, existe);
+                return ps;
+            }, keyHolder);
+            Number key = keyHolder.getKey();
+            return key == null ? null : key.intValue();
+        } catch (org.springframework.jdbc.BadSqlGrammarException ex) {
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            target.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(
+                        "INSERT INTO dbo.tbl_CodigoVentaCargoUsuario " +
+                                "(Id_Venta, Id_Producto, Serial, ChipId, Cantidad, E_Eliminado) " +
+                                "VALUES (?, ?, ?, ?, ?, 0)",
+                        Statement.RETURN_GENERATED_KEYS
+                );
+                ps.setLong(1, idVenta);
+                ps.setInt(2, idProducto);
+                ps.setString(3, serie);
+                ps.setString(4, chipId);
+                ps.setInt(5, cantidad);
+                return ps;
+            }, keyHolder);
+            Number key = keyHolder.getKey();
+            return key == null ? null : key.intValue();
+        }
+    }
+
     public Integer insertarDevolucion(
             Integer idUsuario,
             Integer idRuta,
@@ -293,6 +378,7 @@ public class OtRepository {
     public Integer insertarDetalleDevolucion(
             Integer idDevolucion,
             Integer idProducto,
+            Integer idTipoMaterial,
             String codInicio,
             String chipId,
             BigDecimal cantidad,
@@ -301,20 +387,21 @@ public class OtRepository {
         JdbcTemplate target = template(idSucursal);
         KeyHolder keyHolder = new GeneratedKeyHolder();
         target.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(
+                PreparedStatement ps = connection.prepareStatement(
                     "INSERT INTO dbo.tbl_DetalleDevolucion " +
-                            "(Id_Devolucion, Id_Producto, Cod_Inicio, ChipID, Cantidad, E_Eliminado, Entregado, PendienteRecojo) " +
-                            "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                            "(Id_Devolucion, Id_Producto, Id_TipoMaterial, Cod_Inicio, ChipID, Cantidad, E_Eliminado, Entregado, PendienteRecojo) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
                     Statement.RETURN_GENERATED_KEYS
             );
             boolean entregadoValue = entregado != null && entregado;
             ps.setInt(1, idDevolucion);
             ps.setInt(2, idProducto);
-            ps.setString(3, codInicio);
-            ps.setString(4, chipId);
-            ps.setBigDecimal(5, cantidad);
-            ps.setBoolean(6, entregadoValue);
-            ps.setBoolean(7, !entregadoValue);
+            ps.setInt(3, idTipoMaterial == null ? 0 : idTipoMaterial);
+            ps.setString(4, codInicio);
+            ps.setString(5, chipId);
+            ps.setBigDecimal(6, cantidad);
+            ps.setBoolean(7, entregadoValue);
+            ps.setBoolean(8, !entregadoValue);
             return ps;
         }, keyHolder);
         Number key = keyHolder.getKey();

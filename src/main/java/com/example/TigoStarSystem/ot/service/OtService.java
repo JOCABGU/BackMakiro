@@ -4,12 +4,14 @@ import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.ot.dto.OtCrearRequest;
 import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
+import com.example.TigoStarSystem.ot.dto.OtCargoUsuarioItemRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
 import com.example.TigoStarSystem.ot.dto.OtDetalleMaterialRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarCargoUsuarioRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistroAgendaValidacionResponse;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
@@ -125,6 +127,95 @@ public class OtService {
      */
     public List<Map<String, Object>> obtenerDetalleCargoUsuario(Long idVenta, Integer idSucursal) {
         return otRepository.obtenerDetalleCargoUsuario(idVenta, idSucursal);
+    }
+
+    /**
+     * Registra detalle de cargo usuario para una OT.
+     */
+    @Transactional
+    public int registrarCargoUsuario(OtRegistrarCargoUsuarioRequest request, Integer idSucursal) {
+        if (request == null || request.getNumeroOrden() == null || request.getNumeroOrden().trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "numeroOrden es requerido.");
+        }
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe agregar al menos un producto de cargo usuario.");
+        }
+
+        Map<String, Object> ventaRow = otRepository.obtenerOrdenTrabajoPorNumeroUnica(request.getNumeroOrden().trim(), idSucursal);
+        if (ventaRow == null) {
+            throw notFound("Orden de trabajo no encontrada para numero: " + request.getNumeroOrden());
+        }
+
+        Long idVenta = toLong(findValue(ventaRow, "Id_Venta", "idVenta", "id_venta"));
+        if (idVenta == null || idVenta <= 0) {
+            throw new ApiException(HttpStatus.CONFLICT, "VALIDATION_ERROR", "No se pudo resolver la venta asociada a la OT.");
+        }
+
+        int guardados = 0;
+        for (OtCargoUsuarioItemRequest item : request.getItems()) {
+            if (item == null) {
+                continue;
+            }
+            Integer idProducto = item.getIdProducto();
+            if (idProducto == null || idProducto <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada item debe tener idProducto.");
+            }
+            String serie = safeTrim(item.getSerie());
+            String chipId = safeTrim(item.getChipId());
+            Integer cantidad = item.getCantidad() == null ? 0 : item.getCantidad();
+            if (cantidad <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La cantidad debe ser mayor a cero.");
+            }
+
+            List<Map<String, Object>> duplicados = otRepository.obtenerCargoUsuarioExistente(serie, chipId);
+            if (!duplicados.isEmpty()) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "VALIDATION_ERROR",
+                        "Ya existe un cargo usuario registrado con la misma serie o ChipID."
+                );
+            }
+
+            otRepository.insertarCodigoVentaCargoUsuario(
+                    idVenta,
+                    idProducto,
+                    serie,
+                    chipId,
+                    cantidad,
+                    safeTrim(item.getExiste()),
+                    idSucursal
+            );
+            guardados += 1;
+        }
+
+        return guardados;
+    }
+
+    /**
+     * Ejecuta el SP spx_ObtenerSaldoRuta para consultar saldo por ruta y fecha.
+     */
+    public List<Map<String, Object>> obtenerSaldoRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        validarMayorCero(idRuta, "idRuta");
+        if (fecha == null) {
+            fecha = LocalDate.now();
+        }
+        try {
+            return otRepository.obtenerSaldoRuta(idRuta, fecha, idSucursal);
+        } catch (DataAccessException ex) {
+            logger.warn("spx_ObtenerSaldoRuta fallo para idRuta={} fecha={} sucursal={}. Usando saldo basico de respaldo.", idRuta, fecha, idSucursal, ex);
+            try {
+                return otRepository.obtenerSaldoRutaBasico(idRuta, idSucursal);
+            } catch (DataAccessException fallbackEx) {
+                throw construirErrorSaldoRuta(idRuta, fecha, idSucursal, ex, fallbackEx);
+            }
+        } catch (RuntimeException ex) {
+            logger.warn("spx_ObtenerSaldoRuta fallo para idRuta={} fecha={} sucursal={}. Usando saldo basico de respaldo.", idRuta, fecha, idSucursal, ex);
+            try {
+                return otRepository.obtenerSaldoRutaBasico(idRuta, idSucursal);
+            } catch (RuntimeException fallbackEx) {
+                throw construirErrorSaldoRuta(idRuta, fecha, idSucursal, ex, fallbackEx);
+            }
+        }
     }
 
     /**
@@ -522,6 +613,7 @@ public class OtService {
                     otRepository.insertarDetalleDevolucion(
                             idDevolucion,
                             material.getIdProducto(),
+                            material.getIdTipoMaterial(),
                             clean(material.getSerie()),
                             clean(material.getChipId()),
                             material.getCantidad(),
@@ -937,6 +1029,10 @@ public class OtService {
     }
 
     private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private String safeTrim(String value) {
         return value == null ? "" : value.trim();
     }
 
@@ -1527,5 +1623,36 @@ public class OtService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private ApiException construirErrorSaldoRuta(
+            Integer idRuta,
+            LocalDate fecha,
+            Integer idSucursal,
+            Exception primaryEx,
+            Exception fallbackEx) {
+        Map<String, Object> details = new HashMap<>();
+        details.put("idRuta", idRuta);
+        details.put("fecha", fecha);
+        details.put("idSucursal", idSucursal);
+        details.put("primaryCause", rootMessage(primaryEx));
+        details.put("fallbackCause", rootMessage(fallbackEx));
+        return new ApiException(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "SALDO_RUTA_ERROR",
+                "No se pudo obtener el saldo de ruta.",
+                details
+        );
+    }
+
+    private String rootMessage(Throwable ex) {
+        if (ex == null) {
+            return null;
+        }
+        Throwable root = ex;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        return root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName();
     }
 }
