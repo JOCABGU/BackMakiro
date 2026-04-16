@@ -387,7 +387,7 @@ public class OtRepository {
         JdbcTemplate target = template(idSucursal);
         KeyHolder keyHolder = new GeneratedKeyHolder();
         target.update(connection -> {
-                PreparedStatement ps = connection.prepareStatement(
+            PreparedStatement ps = connection.prepareStatement(
                     "INSERT INTO dbo.tbl_DetalleDevolucion " +
                             "(Id_Devolucion, Id_Producto, Id_TipoMaterial, Cod_Inicio, ChipID, Cantidad, E_Eliminado, Entregado, PendienteRecojo) " +
                             "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",

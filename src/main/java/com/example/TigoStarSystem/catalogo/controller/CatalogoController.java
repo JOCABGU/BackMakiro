@@ -66,6 +66,84 @@ public class CatalogoController {
                 "Listado de productos."));
     }
 
+    @GetMapping("/productos/TraerTodosLosProductos_SinFungibleWeb")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosSinFungibleWeb() {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.listarProductosSinFungibleWeb(),
+                "Listado de productos sin fungible web."));
+    }
+
+    @GetMapping("/productos/TraerTodosLosProductos_x_IdRutaWeb")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosPorRuta(
+            @RequestParam("rutaId") Integer rutaId) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.listarProductosPorRuta(rutaId),
+                "Listado de productos por ruta."));
+    }
+
+    @GetMapping("/productos/TraerTodosLosProductosPCargoUsuarioWeb")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosCargoUsuarioWeb() {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.listarProductosCargoUsuarioWeb(),
+                "Listado de productos para cargo usuario."));
+    }
+
+    @GetMapping("/cargo-usuario/buscar")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> buscarSerialCargoUsuario(
+            @RequestParam(value = "serial", required = false) String serial,
+            @RequestParam(value = "chipId", required = false) String chipId,
+            @RequestParam("tipoCodigo") Integer tipoCodigo) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.buscarSerialCargoUsuario(serial, chipId, tipoCodigo),
+                "Busqueda cargo usuario."
+        ));
+    }
+
+    @GetMapping("/chip-id/spx_TraerChipID2")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerChipIdPorSerie(
+            @RequestParam("serie") String serie) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerChipIdPorSerie(serie),
+                "ChipID obtenido por serie."));
+    }
+
+    @GetMapping("/validar-serie-chip")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> validarSerieChipUnico(
+            @RequestParam("serie") String serie,
+            @RequestParam("chipId") String chipId) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.validarSerieChipUnico(serie, chipId),
+                "Validacion de serie y ChipID."));
+    }
+
+    @GetMapping("/spx_TraerDatoSerieChipIdCU_OT")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> validarSerieSaldo(
+            @RequestParam("serie") String serie,
+            @RequestParam("idProducto") Integer idProducto,
+            @RequestParam("tipoMaterial") Integer tipoMaterial,
+            @RequestParam("idRuta") Integer idRuta) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.validarSerieSaldo(serie, idProducto, tipoMaterial, idRuta),
+                "Validacion de serie contra saldo."));
+    }
+
+    @GetMapping("/spx_TraerDatoSerieChipIdCU")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerDatoSerieChipIdCU(
+            @RequestParam("serie") String serie) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerDatoSerieChipIdCU(serie),
+                "Validacion de serie contra saldo."));
+    }
+
+    @GetMapping("/spx_TraerDatoSerieChipIdCU_CUNR2")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerDatoSerieChipIdCUCUNR2(
+            @RequestParam("serie") String serie,
+            @RequestParam("chipId") String chipId) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerDatoSerieChipIdCUCUNR2(serie, chipId),
+                "Validacion de serie y chipId contra saldo."));
+    }
+
     @GetMapping("/productos/mascara")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosMascara() {
         return ResponseEntity.ok(ApiResponse.of(

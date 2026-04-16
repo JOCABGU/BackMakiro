@@ -35,9 +35,38 @@ public class PrivilegioRepository {
         );
     }
 
+    public List<Map<String, Object>> guardarPaginasPorMenu(Integer idMenu, String paginasCsv) {
+        return queryForListCentral(
+                "EXEC dbo.spx_GuardarPaginasPorMenu ?, ?",
+                idMenu,
+                paginasCsv
+        );
+    }
+
+    public List<Map<String, Object>> guardarNombreSidebarPorMenu(Integer idMenu, String nombreSidebar) {
+        JdbcTemplate central = centralTemplate();
+        central.update(
+                "UPDATE dbo.tbl_tablamenu " +
+                        "SET nombre_sidebar = ? " +
+                        "WHERE Id = ? AND ISNULL(e_eliminado, 0) = 0;",
+                nombreSidebar,
+                idMenu
+        );
+        return queryForList(
+                central,
+                "SELECT Id AS Id_Menu, nombre AS Nombre, nombre_sidebar AS NombreSidebar " +
+                        "FROM dbo.tbl_tablamenu " +
+                        "WHERE Id = ? AND ISNULL(e_eliminado, 0) = 0;",
+                idMenu
+        );
+    }
+
     private List<Map<String, Object>> queryForListCentral(String sql, Object... args) {
-        JdbcTemplate central = dbConnectionManager.connDb(DB_CENTRAL);
-        return queryForList(central, sql, args);
+        return queryForList(centralTemplate(), sql, args);
+    }
+
+    private JdbcTemplate centralTemplate() {
+        return dbConnectionManager.connDb(DB_CENTRAL);
     }
 
     private List<Map<String, Object>> queryForList(JdbcTemplate template, String sql, Object... args) {

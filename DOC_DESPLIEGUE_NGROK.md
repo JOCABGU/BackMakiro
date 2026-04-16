@@ -5,7 +5,7 @@ Este documento resume la forma recomendada de publicar temporalmente el sistema 
 ## 1) Requisitos
 
 - `ngrok` instalado y autenticado (`ngrok config add-authtoken ...`).
-- Backend Spring Boot funcionando en `8089`.
+- Backend Spring Boot funcionando en `9060`.
 - Frontend (`TigoStarPage`) funcionando en `5173` cuando se use modo local.
 - Celular y PC con internet estable.
 
@@ -24,7 +24,7 @@ mvn spring-boot:run
 Verificar:
 
 ```powershell
-curl http://localhost:8089/auth/sucursales
+curl http://localhost:9060/auth/sucursales
 ```
 
 Debe devolver JSON con `data` (lista de sucursales).
@@ -40,7 +40,7 @@ VITE_API_URL=/api
 ```
 
 - `vite.config.ts` debe tener:
-  - `server.proxy['/api'] -> http://localhost:8089`
+  - `server.proxy['/api'] -> http://localhost:9060`
   - `server.allowedHosts` incluyendo `.ngrok-free.app`
 
 ### Paso 3: Levantar front
@@ -75,11 +75,11 @@ No usar `localhost` en el celular.
 
 Si el front esta en Vercel:
 
-1. Levantar backend local en `8089`.
+ 1. Levantar backend local en `9060`.
 2. Crear tunel:
 
 ```powershell
-ngrok http 8089
+ngrok http 9060
 ```
 
 3. Actualizar `vercel.json` del front:

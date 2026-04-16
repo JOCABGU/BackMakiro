@@ -84,14 +84,22 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGeneric(Exception ex, HttpServletRequest request) {
         logger.error("Unhandled error on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        Map<String, Object> details = new HashMap<>();
+        details.put("exception", ex.getClass().getSimpleName());
+        Throwable root = ex.getCause();
+        while (root != null && root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (root != null) {
+            details.put("rootCause", root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage());
+        }
         ApiError apiError = new ApiError(
                 "INTERNAL_ERROR",
                 "Error inesperado.",
-                null,
+                details,
                 OffsetDateTime.now(),
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(apiError);
     }
 }
-

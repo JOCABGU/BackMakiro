@@ -3,6 +3,8 @@ package com.example.TigoStarSystem.privilegios.service;
 import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuResponse;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuPaginasResponse;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuSidebarNombreResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioRolDetalleResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioRolResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioUsuarioResponse;
@@ -89,6 +91,72 @@ public class PrivilegioService {
         return actualizarPrivilegiosRol(idRol, MENU_IDS_PRESET_SUPERVISOR_CUADRILLAS);
     }
 
+    /**
+     * Reemplaza la relacion de paginas asociadas para un menu.
+     */
+    public PrivilegioMenuPaginasResponse actualizarPaginasPorMenu(Integer idMenu, List<String> paginasAsociadas) {
+        if (idMenu == null || idMenu <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idMenu es requerido.");
+        }
+        List<String> paginasSanitizadas = sanitizarPaginasAsociadas(paginasAsociadas);
+        String paginasCsv = joinCsvStrings(paginasSanitizadas);
+        List<Map<String, Object>> rows = repository.guardarPaginasPorMenu(idMenu, paginasCsv);
+
+        String nombreMenu = null;
+        List<String> paginas = new ArrayList<>();
+        Set<String> unique = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            Integer idMenuRow = toInteger(findValue(row, "id_menu", "idmenu"));
+            if (idMenuRow != null && !idMenu.equals(idMenuRow)) {
+                continue;
+            }
+            if (nombreMenu == null) {
+                nombreMenu = toString(findValue(row, "nombre", "menu"));
+            }
+            String pagina = toString(findValue(row, "pagina_asociada", "paginaasociada"));
+            if (pagina == null) {
+                continue;
+            }
+            String normalizada = pagina.trim();
+            if (normalizada.isEmpty()) {
+                continue;
+            }
+            String key = normalizada.toLowerCase(Locale.ROOT);
+            if (unique.add(key)) {
+                paginas.add(normalizada);
+            }
+        }
+
+        if (nombreMenu == null) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "MENU_NOT_FOUND", "Menu no encontrado o inactivo.");
+        }
+
+        return new PrivilegioMenuPaginasResponse(idMenu, nombreMenu, paginas);
+    }
+
+    /**
+     * Actualiza el nombre mostrado en sidebar para un menu.
+     */
+    public PrivilegioMenuSidebarNombreResponse actualizarNombreSidebarPorMenu(Integer idMenu, String nombreSidebarRaw) {
+        if (idMenu == null || idMenu <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idMenu es requerido.");
+        }
+        String nombreSidebar = sanitizeNombreSidebar(nombreSidebarRaw);
+        List<Map<String, Object>> rows = repository.guardarNombreSidebarPorMenu(idMenu, nombreSidebar);
+        if (rows.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "MENU_NOT_FOUND", "Menu no encontrado o inactivo.");
+        }
+        Map<String, Object> row = rows.get(0);
+        Integer idMenuResp = toInteger(findValue(row, "id_menu", "idmenu"));
+        String nombre = toString(findValue(row, "nombre", "menu"));
+        String nombreSidebarResp = toString(findValue(row, "nombre_sidebar", "nombresidebar"));
+        return new PrivilegioMenuSidebarNombreResponse(
+                idMenuResp == null ? idMenu : idMenuResp,
+                nombre,
+                nombreSidebarResp
+        );
+    }
+
 
 
 
@@ -136,12 +204,62 @@ public class PrivilegioService {
             }
             String nombre = toString(findValue(row, "nombre", "menu"));
             String nombreMostrar = limpiarNombreMenu(nombre);
+            String nombreSidebar = toString(findValue(row, "nombre_sidebar", "nombresidebar"));
+            String paginaAsociadaLegacy = toString(findValue(row, "pagina_asociada", "paginaasociada"));
+            String paginasAsociadasCsv = toString(findValue(row, "paginas_asociadas_csv", "paginasasociadascsv"));
+            List<String> paginasAsociadas = parsePaginasAsociadas(paginasAsociadasCsv, paginaAsociadaLegacy);
+            String paginaAsociada = paginasAsociadas.isEmpty() ? null : paginasAsociadas.get(0);
             Integer nivel = toInteger(findValue(row, "nivel"));
             Integer padre = toInteger(findValue(row, "padre", "id_padre"));
             boolean asignado = toBoolean(findValue(row, "asignado")) == Boolean.TRUE;
-            response.add(new PrivilegioMenuResponse(idMenu, nombre, nombreMostrar, nivel, padre, asignado));
+            response.add(new PrivilegioMenuResponse(
+                    idMenu,
+                    nombre,
+                    nombreMostrar,
+                    nombreSidebar,
+                    paginaAsociada,
+                    paginasAsociadas,
+                    nivel,
+                    padre,
+                    asignado
+            ));
         }
         return response;
+    }
+
+    /**
+     * Convierte CSV de paginas asociadas en lista deduplicada y ordenada por llegada.
+     * Mantiene compatibilidad con el campo legacy de pagina unica.
+     */
+    private List<String> parsePaginasAsociadas(String paginasCsv, String paginaLegacy) {
+        Set<String> uniqueNormalized = new HashSet<>();
+        List<String> pages = new ArrayList<>();
+
+        if (paginasCsv != null) {
+            String[] rawPages = paginasCsv.split(",");
+            for (String raw : rawPages) {
+                String value = raw == null ? null : raw.trim();
+                if (value == null || value.isEmpty()) {
+                    continue;
+                }
+                String key = value.toLowerCase(Locale.ROOT);
+                if (uniqueNormalized.add(key)) {
+                    pages.add(value);
+                }
+            }
+        }
+
+        if (paginaLegacy != null) {
+            String value = paginaLegacy.trim();
+            if (!value.isEmpty()) {
+                String key = value.toLowerCase(Locale.ROOT);
+                if (uniqueNormalized.add(key)) {
+                    pages.add(value);
+                }
+            }
+        }
+
+        return pages;
     }
 
 
@@ -184,6 +302,30 @@ public class PrivilegioService {
         return sb.toString();
     }
 
+    /**
+     * Convierte una lista de textos en CSV para persistencia en SP.
+     */
+    private String joinCsvStrings(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String value : values) {
+            if (value == null) {
+                continue;
+            }
+            String trimmed = value.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(trimmed);
+        }
+        return sb.toString();
+    }
+
 
 
 
@@ -206,6 +348,66 @@ public class PrivilegioService {
             }
         }
         return result;
+    }
+
+    /**
+     * Limpia paginas asociadas: elimina vacios, duplicados y valida formato de persistencia.
+     */
+    private List<String> sanitizarPaginasAsociadas(List<String> paginasAsociadas) {
+        if (paginasAsociadas == null) {
+            return Collections.emptyList();
+        }
+        Set<String> unique = new HashSet<>();
+        List<String> result = new ArrayList<>();
+        for (String pagina : paginasAsociadas) {
+            if (pagina == null) {
+                continue;
+            }
+            String value = pagina.trim();
+            if (value.isEmpty()) {
+                continue;
+            }
+            if (value.length() > 150) {
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "VALIDATION_ERROR",
+                        "El nombre de pagina no puede exceder 150 caracteres."
+                );
+            }
+            if (value.contains(",")) {
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "VALIDATION_ERROR",
+                        "El nombre de pagina no puede contener comas."
+                );
+            }
+            String key = value.toLowerCase(Locale.ROOT);
+            if (unique.add(key)) {
+                result.add(value);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Limpia nombre para sidebar; vacio equivale a NULL.
+     */
+    private String sanitizeNombreSidebar(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim();
+        if (value.isEmpty()) {
+            return null;
+        }
+        if (value.length() > 150) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "nombreSidebar no puede exceder 150 caracteres."
+            );
+        }
+        return value;
     }
 
 

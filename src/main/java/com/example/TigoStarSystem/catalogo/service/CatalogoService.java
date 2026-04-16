@@ -75,6 +75,104 @@ public class CatalogoService {
     }
 
     /**
+     * Lista catalogo de productos sin fungible web.
+     */
+    public List<Map<String, Object>> listarProductosSinFungibleWeb() {
+        return catalogoRepository.listarProductosSinFungibleWeb();
+    }
+
+    public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta) {
+        if (idRuta == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "rutaId es requerido."
+            );
+        }
+        return catalogoRepository.listarProductosPorRuta(idRuta);
+    }
+
+    /**
+     * Lista productos disponibles para cargo usuario.
+     */
+    public List<Map<String, Object>> listarProductosCargoUsuarioWeb() {
+        return catalogoRepository.listarProductosCargoUsuarioWeb();
+    }
+
+    /**
+     * Busca existencia de serial/chip para cargo usuario.
+     */
+    public List<Map<String, Object>> buscarSerialCargoUsuario(String serial, String chipId, Integer tipoCodigo) {
+        if (tipoCodigo == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tipoCodigo es requerido.");
+        }
+        return catalogoRepository.buscarSerialCargoUsuario(
+                serial == null ? "" : serial.trim(),
+                chipId == null ? "" : chipId.trim(),
+                tipoCodigo
+        );
+    }
+
+    /**
+     * Obtiene chipId e idProducto desde la serie.
+     */
+    public List<Map<String, Object>> traerChipIdPorSerie(String serie) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        return catalogoRepository.traerChipIdPorSerie(serie.trim());
+    }
+
+    /**
+     * Valida que serie y chipId correspondan al mismo registro.
+     */
+    public Map<String, Object> validarSerieChipUnico(String serie, String chipId) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        if (chipId == null || chipId.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "chipId es requerido.");
+        }
+        return catalogoRepository.validarSerieChipUnico(serie.trim(), chipId.trim());
+    }
+
+    /**
+     * Valida la serie contra el saldo usando el procedimiento de OT.
+     */
+    public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        if (idProducto == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idProducto es requerido.");
+        }
+        if (tipoMaterial == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tipoMaterial es requerido.");
+        }
+        if (idRuta == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idRuta es requerido.");
+        }
+        return catalogoRepository.validarSerieSaldo(serie.trim(), idProducto, tipoMaterial, idRuta);
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        return catalogoRepository.traerDatoSerieChipIdCU(serie.trim());
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        if (chipId == null || chipId.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "chipId es requerido.");
+        }
+        return catalogoRepository.traerDatoSerieChipIdCUCUNR2(serie.trim(), chipId.trim());
+    }
+
+    /**
      * Lista mascaras/configuraciones de productos.
      */
     public List<Map<String, Object>> listarProductosMascara() {
