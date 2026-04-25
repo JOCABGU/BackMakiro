@@ -39,6 +39,52 @@ public class LlamadaAtencionFirmaStorageService {
         return guardarFirma(firmaRaw, "firma_testigo");
     }
 
+    public FirmaFile cargarFirma(String firmaPathRaw) {
+        String firmaPath = trimToNull(firmaPathRaw);
+        if (firmaPath == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Ruta de firma requerida."
+            );
+        }
+
+        String normalizedRelative = firmaPath.replace("\\", "/");
+        while (normalizedRelative.startsWith("/")) {
+            normalizedRelative = normalizedRelative.substring(1);
+        }
+
+        Path resolved = baseDir.resolve(normalizedRelative).normalize();
+        if (!resolved.startsWith(baseDir)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Ruta de firma invalida."
+            );
+        }
+
+        if (!Files.exists(resolved) || !Files.isRegularFile(resolved)) {
+            throw new ApiException(
+                    HttpStatus.NOT_FOUND,
+                    "NOT_FOUND",
+                    "Archivo de firma no encontrado."
+            );
+        }
+
+        byte[] content;
+        try {
+            content = Files.readAllBytes(resolved);
+        } catch (IOException ex) {
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "FIRMA_STORAGE_ERROR",
+                    "No se pudo leer la imagen de firma."
+            );
+        }
+
+        return new FirmaFile(content, resolveContentType(resolved));
+    }
+
     private String guardarFirma(String firmaRaw, String prefijo) {
         String value = trimToNull(firmaRaw);
         if (value == null) {
@@ -139,6 +185,20 @@ public class LlamadaAtencionFirmaStorageService {
         }
     }
 
+    private String resolveContentType(Path path) {
+        String name = path == null ? "" : path.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".png")) {
+            return "image/png";
+        }
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (name.endsWith(".webp")) {
+            return "image/webp";
+        }
+        return "application/octet-stream";
+    }
+
     private String trimToNull(String value) {
         if (value == null) {
             return null;
@@ -154,6 +214,24 @@ public class LlamadaAtencionFirmaStorageService {
         private DecodedImage(byte[] bytes, String extension) {
             this.bytes = bytes;
             this.extension = extension;
+        }
+    }
+
+    public static final class FirmaFile {
+        private final byte[] content;
+        private final String contentType;
+
+        public FirmaFile(byte[] content, String contentType) {
+            this.content = content;
+            this.contentType = contentType;
+        }
+
+        public byte[] getContent() {
+            return content;
+        }
+
+        public String getContentType() {
+            return contentType;
         }
     }
 }

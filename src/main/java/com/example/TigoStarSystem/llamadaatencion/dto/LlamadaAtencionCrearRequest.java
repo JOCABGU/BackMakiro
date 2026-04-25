@@ -8,6 +8,9 @@ public class LlamadaAtencionCrearRequest {
     @NotBlank(message = "idTecnico es requerido")
     private String idTecnico;
 
+    @NotBlank(message = "codEmpleado es requerido")
+    private String codEmpleado;
+
     @NotBlank(message = "idTipoComunicacion es requerido")
     private String idTipoComunicacion;
 
@@ -36,6 +39,14 @@ public class LlamadaAtencionCrearRequest {
 
     public void setIdTecnico(String idTecnico) {
         this.idTecnico = idTecnico;
+    }
+
+    public String getCodEmpleado() {
+        return codEmpleado;
+    }
+
+    public void setCodEmpleado(String codEmpleado) {
+        this.codEmpleado = codEmpleado;
     }
 
     public String getIdTipoComunicacion() {

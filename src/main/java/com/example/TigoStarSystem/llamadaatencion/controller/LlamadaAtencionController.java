@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.llamadaatencion.dto.LlamadaAtencionCrearRequest;
 import com.example.TigoStarSystem.llamadaatencion.service.LlamadaAtencionService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -61,6 +62,18 @@ public class LlamadaAtencionController {
                 service.listarTiposComunicacion(token),
                 "Listado de tipos de comunicacion."
         ));
+    }
+
+    @GetMapping(value = "/firma")
+    public ResponseEntity<byte[]> obtenerFirma(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "path") String path) {
+        com.example.TigoStarSystem.llamadaatencion.service.LlamadaAtencionFirmaStorageService.FirmaFile file =
+                service.obtenerFirma(path, token);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(file.getContentType()))
+                .body(file.getContent());
     }
 
     @GetMapping("/tecnicos")

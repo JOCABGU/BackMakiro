@@ -1,6 +1,20 @@
 USE [BD_TigoHogar]
 GO
 
+IF COL_LENGTH('dbo.tbl_LlamadaAtencion', 'Cod_EmpleadoTecnico') IS NULL
+BEGIN
+    ALTER TABLE dbo.tbl_LlamadaAtencion
+    ADD Cod_EmpleadoTecnico NVARCHAR(30) NULL;
+END
+GO
+
+IF COL_LENGTH('dbo.tbl_LlamadaAtencion', 'Id_UsuarioSupervisor') IS NULL
+BEGIN
+    ALTER TABLE dbo.tbl_LlamadaAtencion
+    ADD Id_UsuarioSupervisor INT NULL;
+END
+GO
+
 IF EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -14,6 +28,8 @@ GO
 
 CREATE OR ALTER PROC dbo.spx_RegistrarLlamadaAtencion
     @IdTecnico NVARCHAR(16),
+    @CodEmpleado NVARCHAR(30),
+    @IdUsuarioSupervisor INT,
     @IdTipoComunicacion NVARCHAR(16),
     @Motivo NVARCHAR(500),
     @Descripcion NVARCHAR(500) = NULL,
@@ -27,6 +43,7 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @IdTecnicoNorm NVARCHAR(16) = NULLIF(LTRIM(RTRIM(@IdTecnico)), '');
+    DECLARE @CodEmpleadoNorm NVARCHAR(30) = NULLIF(LTRIM(RTRIM(@CodEmpleado)), '');
     DECLARE @IdTipoNorm NVARCHAR(16) = NULLIF(LTRIM(RTRIM(@IdTipoComunicacion)), '');
     DECLARE @MotivoNorm NVARCHAR(500) = NULLIF(LTRIM(RTRIM(@Motivo)), '');
 
@@ -75,6 +92,8 @@ BEGIN
     INSERT INTO dbo.tbl_LlamadaAtencion (
         Id_LlamadaAtencion,
         Id_Tecnico,
+        Cod_EmpleadoTecnico,
+        Id_UsuarioSupervisor,
         Id_TipoComunicacion,
         Fecha_Registro,
         Motivo,
@@ -88,6 +107,8 @@ BEGIN
     VALUES (
         @NuevoId,
         @IdTecnicoNorm,
+        @CodEmpleadoNorm,
+        @IdUsuarioSupervisor,
         @IdTipoNorm,
         GETDATE(),
         @MotivoNorm,
@@ -119,6 +140,8 @@ BEGIN
     SELECT TOP (@Top)
         la.Id_LlamadaAtencion AS idLlamadaAtencion,
         la.Id_Tecnico AS idTecnico,
+        la.Cod_EmpleadoTecnico AS codEmpleado,
+        la.Id_UsuarioSupervisor AS idUsuarioSupervisor,
         ISNULL(NULLIF(LTRIM(RTRIM(u.Nombre)), ''), la.Id_Tecnico) AS tecnico,
         la.Id_TipoComunicacion AS idTipoComunicacion,
         tc.TipoComunicacion AS tipoComunicacion,
@@ -139,3 +162,14 @@ BEGIN
     ORDER BY la.Fecha_Registro DESC, la.Id_LlamadaAtencion DESC;
 END
 GO
+    IF @CodEmpleadoNorm IS NULL
+    BEGIN
+        RAISERROR('CodEmpleado es requerido.', 16, 1);
+        RETURN;
+    END
+
+    IF @IdUsuarioSupervisor IS NULL
+    BEGIN
+        RAISERROR('IdUsuarioSupervisor es requerido.', 16, 1);
+        RETURN;
+    END

@@ -154,6 +154,7 @@ public class AuthService {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Usuario o password invÃ¡lidos.");
         }
         AuthLoginResponse userFromDb = mapToResponse(rows.get(0), sucursal.idSucursal);
+        Integer idUsuarioSesion = resolveIdUsuarioSesionPorRol(jdbcTemplate, request.getUsuario(), userFromDb);
         Integer idSucursalSeleccionada = request.getIdSucursal();
         if (userFromDb.getIdSucursal() != null
                 && idSucursalSeleccionada != null
@@ -166,7 +167,7 @@ public class AuthService {
             );
         }
         AuthLoginResponse user = new AuthLoginResponse(
-                userFromDb.getIdUsuario(),
+                idUsuarioSesion,
                 userFromDb.getNombre(),
                 userFromDb.getRol(),
                 userFromDb.getIdRol(),
@@ -641,6 +642,51 @@ public class AuthService {
             return null;
         }
         return value.trim();
+    }
+
+    private Integer resolveIdUsuarioSesionPorRol(
+            JdbcTemplate template,
+            String usuarioLogin,
+            AuthLoginResponse userFromDb) {
+        Integer idDesdeSp = userFromDb == null ? null : userFromDb.getIdUsuario();
+        if (userFromDb == null) {
+            return idDesdeSp;
+        }
+
+        boolean esSupervisor = false;
+        if (userFromDb.getIdRol() != null && userFromDb.getIdRol() == 9) {
+            esSupervisor = true;
+        } else if (userFromDb.getRol() != null) {
+            String rol = userFromDb.getRol().trim().toLowerCase(Locale.ROOT);
+            esSupervisor = rol.contains("supervisor");
+        }
+
+        if (!esSupervisor || isBlank(usuarioLogin) || template == null) {
+            return idDesdeSp;
+        }
+
+        try {
+            List<Map<String, Object>> rows = template.queryForList(
+                    "SELECT TOP 1 Id_Usuario " +
+                            "FROM dbo.tbl_Usuario " +
+                            "WHERE LOWER(LTRIM(RTRIM(Loggin))) = LOWER(LTRIM(RTRIM(?))) " +
+                            "  AND ISNULL(E_Eliminado, 0) = 0",
+                    usuarioLogin
+            );
+            if (rows == null || rows.isEmpty()) {
+                return idDesdeSp;
+            }
+            Object value = rows.get(0).get("Id_Usuario");
+            Integer idPorLoggin = toInteger(value);
+            return idPorLoggin == null ? idDesdeSp : idPorLoggin;
+        } catch (Exception ex) {
+            logger.warn(
+                    "No se pudo resolver Id_Usuario por Loggin para supervisor. Se usara id devuelto por SP. usuario={}",
+                    safe(usuarioLogin),
+                    ex
+            );
+            return idDesdeSp;
+        }
     }
 
     private static final class SucursalInfo {

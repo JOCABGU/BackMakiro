@@ -43,6 +43,8 @@ public class LlamadaAtencionRepository {
 
     public String insertarLlamadaAtencion(
             String idTecnico,
+            String codEmpleado,
+            Integer idUsuarioSupervisor,
             String idTipoComunicacion,
             String motivo,
             String descripcion,
@@ -52,8 +54,10 @@ public class LlamadaAtencionRepository {
             String firmaTecnico,
             String firmaTestigo) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.spx_RegistrarLlamadaAtencion ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                "EXEC dbo.spx_RegistrarLlamadaAtencion ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                 trimToNull(idTecnico),
+                trimToNull(codEmpleado),
+                idUsuarioSupervisor,
                 trimToNull(idTipoComunicacion),
                 trimToNull(motivo),
                 trimToNull(descripcion),

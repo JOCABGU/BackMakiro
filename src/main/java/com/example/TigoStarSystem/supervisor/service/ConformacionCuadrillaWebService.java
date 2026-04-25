@@ -209,8 +209,13 @@ public class ConformacionCuadrillaWebService {
      * Lista tecnicos para el formulario web aplicando busqueda y limite.
      */
     public List<Map<String, Object>> listarTecnicos(String q, Integer limit, String sucursal, String token) {
+        Integer idUsuarioSupervisor = resolveIdUsuarioSesion(token);
         String sucursalResuelta = resolveSucursalNombre(sucursal, token);
-        return TecnicoSearchUtil.filterAndLimit(repository.listarTecnicos(sucursalResuelta), q, limit);
+        return TecnicoSearchUtil.filterAndLimit(
+                repository.listarTecnicos(sucursalResuelta, idUsuarioSupervisor),
+                q,
+                limit
+        );
     }
 
     /**
@@ -232,7 +237,8 @@ public class ConformacionCuadrillaWebService {
      * Lista auxiliares disponibles en la sucursal resuelta.
      */
     public List<Map<String, Object>> listarAuxiliares(String sucursal, String token) {
-        return repository.listarAuxiliares(resolveSucursalNombre(sucursal, token));
+        Integer idUsuarioSupervisor = resolveIdUsuarioSesion(token);
+        return repository.listarAuxiliares(resolveSucursalNombre(sucursal, token), idUsuarioSupervisor);
     }
 
     /**
@@ -487,5 +493,18 @@ public class ConformacionCuadrillaWebService {
      */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private Integer resolveIdUsuarioSesion(String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idUsuarioSupervisor = me.getUsuario() == null ? null : me.getUsuario().getIdUsuario();
+        if (idUsuarioSupervisor == null || idUsuarioSupervisor <= 0) {
+            throw new ApiException(
+                    HttpStatus.UNAUTHORIZED,
+                    "SESSION_INVALID",
+                    "No se pudo resolver el supervisor de la sesion."
+            );
+        }
+        return idUsuarioSupervisor;
     }
 }

@@ -169,6 +169,7 @@ BEGIN
     SELECT
         v.Id_Vendedor AS id_tecnico,
         v.Nombre AS tecnico,
+        v.CodEmpleado AS cod_empleado,
         v.CuentaSF AS cuenta_sf,
         v.SalesForce AS salesforce,
         v.Habilidad AS habilidad,

@@ -35,6 +35,7 @@ BEGIN
     SELECT
         v.Id_Vendedor AS id_tecnico,
         LTRIM(RTRIM(v.Nombre)) AS tecnico,
+        NULLIF(LTRIM(RTRIM(v.CodEmpleado)), '') AS cod_empleado,
         NULLIF(LTRIM(RTRIM(v.CuentaSF)), '') AS cuenta_sf,
         NULLIF(LTRIM(RTRIM(v.SalesForce)), '') AS salesforce,
         NULLIF(LTRIM(RTRIM(v.Habilidad)), '') AS habilidad,
@@ -49,6 +50,7 @@ BEGIN
             @FiltroNorm IS NULL
             OR CONVERT(NVARCHAR(30), v.Id_Vendedor) = @FiltroNorm
             OR v.Nombre LIKE '%' + @FiltroNorm + '%'
+            OR ISNULL(v.CodEmpleado, '') LIKE '%' + @FiltroNorm + '%'
             OR ISNULL(v.CuentaSF, '') LIKE '%' + @FiltroNorm + '%'
             OR ISNULL(v.SalesForce, '') LIKE '%' + @FiltroNorm + '%'
           )
@@ -76,6 +78,7 @@ BEGIN
     SELECT
         v.Id_Vendedor AS id_tecnico,
         LTRIM(RTRIM(v.Nombre)) AS tecnico,
+        NULLIF(LTRIM(RTRIM(v.CodEmpleado)), '') AS cod_empleado,
         NULLIF(LTRIM(RTRIM(v.CuentaSF)), '') AS cuenta_sf,
         NULLIF(LTRIM(RTRIM(v.SalesForce)), '') AS salesforce,
         NULLIF(LTRIM(RTRIM(v.Habilidad)), '') AS habilidad,
@@ -90,10 +93,10 @@ BEGIN
             @FiltroNorm IS NULL
             OR CONVERT(NVARCHAR(30), v.Id_Vendedor) = @FiltroNorm
             OR v.Nombre LIKE '%' + @FiltroNorm + '%'
+            OR ISNULL(v.CodEmpleado, '') LIKE '%' + @FiltroNorm + '%'
             OR ISNULL(v.CuentaSF, '') LIKE '%' + @FiltroNorm + '%'
             OR ISNULL(v.SalesForce, '') LIKE '%' + @FiltroNorm + '%'
           )
     ORDER BY v.Nombre;
 END
 GO
-

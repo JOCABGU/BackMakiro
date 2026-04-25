@@ -21,8 +21,7 @@ import java.util.Map;
 
 @Service
 public class LlamadaAtencionService {
-    private static final String SP_TECNICOS = "EXEC dbo.spx_ObtenerTecnicosLlamadaAtencion ?";
-    private static final String SP_TECNICOS_SIN_FILTRO = "EXEC dbo.spx_ObtenerTecnicosLlamadaAtencion";
+    private static final String SP_TECNICOS_SIN_FILTRO = "EXEC dbo.spx_ObtenerTecnicosConformacionCuadrillaWeb";
     private final LlamadaAtencionRepository repository;
     private final LlamadaAtencionFirmaStorageService firmaStorageService;
     private final DbConnectionManager dbConnectionManager;
@@ -62,9 +61,19 @@ public class LlamadaAtencionService {
 
         String firmaTecnico = firmaStorageService.guardarFirmaTecnico(request.getFirmaTecnico());
         String firmaTestigo = firmaStorageService.guardarFirmaTestigo(request.getFirmaTestigo());
+        Integer idUsuarioSupervisor = me.getUsuario() == null ? null : me.getUsuario().getIdUsuario();
+        if (idUsuarioSupervisor == null) {
+            throw new ApiException(
+                    HttpStatus.UNAUTHORIZED,
+                    "SESSION_INVALID",
+                    "No se pudo identificar el usuario que registra la llamada."
+            );
+        }
 
         String idGenerado = repository.insertarLlamadaAtencion(
                 request.getIdTecnico(),
+                request.getCodEmpleado(),
+                idUsuarioSupervisor,
                 request.getIdTipoComunicacion(),
                 request.getMotivo(),
                 request.getDescripcion(),
@@ -86,6 +95,11 @@ public class LlamadaAtencionService {
         return repository.listarTiposComunicacion();
     }
 
+    public LlamadaAtencionFirmaStorageService.FirmaFile obtenerFirma(String path, String token) {
+        authService.me(token);
+        return firmaStorageService.cargarFirma(path);
+    }
+
     public List<Map<String, Object>> listarTecnicos(
             String q,
             Integer limit,
@@ -95,14 +109,8 @@ public class LlamadaAtencionService {
         JdbcTemplate template = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
         String filtro = trimToNull(q);
 
-        List<Map<String, Object>> rows;
-        if (filtro == null) {
-            rows = template.queryForList(SP_TECNICOS_SIN_FILTRO);
-        } else {
-            rows = template.queryForList(SP_TECNICOS, filtro);
-        }
-
-        List<Map<String, Object>> normalizadas = normalizarTecnicos(rows);
+        List<Map<String, Object>> rows = template.queryForList(SP_TECNICOS_SIN_FILTRO);
+        List<Map<String, Object>> normalizadas = normalizarTecnicos(rows, filtro);
         int max = resolveLimit(limit);
         if (normalizadas.size() <= max) {
             return normalizadas;
@@ -138,11 +146,12 @@ public class LlamadaAtencionService {
         return null;
     }
 
-    private List<Map<String, Object>> normalizarTecnicos(List<Map<String, Object>> rows) {
+    private List<Map<String, Object>> normalizarTecnicos(List<Map<String, Object>> rows, String filtro) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (rows == null || rows.isEmpty()) {
             return out;
         }
+        String filtroNorm = normalizeText(filtro);
         for (Map<String, Object> row : rows) {
             Map<String, Object> normalizada = new LinkedHashMap<>();
             if (row != null) {
@@ -151,6 +160,7 @@ public class LlamadaAtencionService {
                 Object idTecnico = findValue(row, "id_tecnico", "idtecnico", "id_vendedor", "idvendedor");
                 Object tecnico = findValue(row, "tecnico", "nombre", "vendedor", "nombrevendedor");
                 Object cuentaSf = findValue(row, "cuenta_sf", "cuentasf", "cuentaSf");
+                Object codEmpleado = findValue(row, "cod_empleado", "codempleado", "codEmpleado");
                 Object salesforce = findValue(row, "salesforce");
                 Object habilidad = findValue(row, "habilidad");
                 Object vehiculo = findValue(row, "vehiculo");
@@ -166,6 +176,10 @@ public class LlamadaAtencionService {
                     normalizada.put("cuentaSf", cuentaSf);
                     normalizada.put("cuenta_sf", cuentaSf);
                 }
+                if (codEmpleado != null) {
+                    normalizada.put("codEmpleado", codEmpleado);
+                    normalizada.put("cod_empleado", codEmpleado);
+                }
                 if (salesforce != null) {
                     normalizada.put("salesforce", salesforce);
                 }
@@ -176,9 +190,34 @@ public class LlamadaAtencionService {
                     normalizada.put("vehiculo", vehiculo);
                 }
             }
+            if (!matchesFiltro(normalizada, filtroNorm)) {
+                continue;
+            }
             out.add(normalizada);
         }
         return out;
+    }
+
+    private boolean matchesFiltro(Map<String, Object> row, String filtroNorm) {
+        if (filtroNorm == null || filtroNorm.isEmpty()) {
+            return true;
+        }
+        String[] keys = new String[] {
+                "idTecnico", "id_tecnico", "idVendedor", "id_vendedor",
+                "tecnico", "nombre", "nombrevendedor", "vendedor",
+                "cuentaSf", "cuenta_sf", "codEmpleado", "cod_empleado", "codempleado", "salesforce", "habilidad", "vehiculo"
+        };
+        for (String key : keys) {
+            Object value = findValue(row, key);
+            if (value == null) {
+                continue;
+            }
+            String current = normalizeText(String.valueOf(value));
+            if (!current.isEmpty() && current.contains(filtroNorm)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void validarRangoFechas(LocalDate fechaDesde, LocalDate fechaHasta) {
