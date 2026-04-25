@@ -64,18 +64,6 @@ public class SupervisionController {
         ));
     }
 
-    @GetMapping("/tecnicos")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarTecnicos(
-            @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @RequestParam(value = "q", required = false) String q,
-            @RequestParam(value = "limit", required = false) Integer limit,
-            @RequestParam(value = "sucursal", required = false) String sucursal) {
-        return ResponseEntity.ok(ApiResponse.of(
-                service.listarTecnicos(q, limit, sucursal, token),
-                "Listado de tecnicos para supervision."
-        ));
-    }
-
     @GetMapping("/catalogos/tipos-supervision")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarTiposSupervision(
             @RequestHeader(value = "X-Session-Token", required = false) String token) {

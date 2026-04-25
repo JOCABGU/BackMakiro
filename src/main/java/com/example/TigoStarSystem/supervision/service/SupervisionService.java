@@ -1,13 +1,10 @@
 package com.example.TigoStarSystem.supervision.service;
 
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
-import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearRequest;
 import com.example.TigoStarSystem.supervision.repository.SupervisionRepository;
-import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
-import com.example.TigoStarSystem.supervisor.repository.ConformacionCuadrillaWebRepository;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -20,15 +17,12 @@ import java.util.Map;
 @Service
 public class SupervisionService {
     private final SupervisionRepository repository;
-    private final ConformacionCuadrillaWebRepository cuadrillaWebRepository;
     private final AuthService authService;
 
     public SupervisionService(
             SupervisionRepository repository,
-            ConformacionCuadrillaWebRepository cuadrillaWebRepository,
             AuthService authService) {
         this.repository = repository;
-        this.cuadrillaWebRepository = cuadrillaWebRepository;
         this.authService = authService;
     }
 
@@ -101,14 +95,6 @@ public class SupervisionService {
         return out;
     }
 
-    public List<Map<String, Object>> listarTecnicos(String q, Integer limit, String sucursal, String token) {
-        AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        String sucursalResuelta = resolveSucursalNombre(sucursal, me);
-        List<Map<String, Object>> rows = cuadrillaWebRepository.listarTecnicos(sucursalResuelta, idSupervisor);
-        return filterAndLimitTecnicos(rows, q, limit);
-    }
-
     public List<Map<String, Object>> listarTiposSupervision(String token) {
         authService.me(token);
         try {
@@ -148,25 +134,6 @@ public class SupervisionService {
         return idUsuario;
     }
 
-    private String resolveSucursalNombre(String sucursal, AuthMeResponse me) {
-        if (!isBlank(sucursal)) {
-            return SucursalCanonicalizer.canonicalize(sucursal);
-        }
-
-        Integer idSucursal = me.getUsuario() == null ? null : me.getUsuario().getIdSucursal();
-        if (idSucursal == null) {
-            return null;
-        }
-
-        List<SucursalResponse> sucursales = authService.listarSucursales();
-        for (SucursalResponse item : sucursales) {
-            if (item != null && idSucursal.equals(item.getIdSucursal())) {
-                return SucursalCanonicalizer.canonicalize(item.getSucursal());
-            }
-        }
-        return null;
-    }
-
     private void validarRangoFechas(LocalDate fechaDesde, LocalDate fechaHasta) {
         if (fechaDesde != null && fechaHasta != null && fechaDesde.isAfter(fechaHasta)) {
             throw new ApiException(
@@ -177,35 +144,4 @@ public class SupervisionService {
         }
     }
 
-    private boolean isBlank(String value) {
-        return value == null || value.trim().isEmpty();
-    }
-
-    private List<Map<String, Object>> filterAndLimitTecnicos(List<Map<String, Object>> source, String query, Integer limit) {
-        if (source == null || source.isEmpty()) {
-            return java.util.Collections.emptyList();
-        }
-
-        String term = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
-        int resolvedLimit = limit == null || limit <= 0 ? 50 : Math.min(limit, 300);
-        java.util.List<Map<String, Object>> filtered = new java.util.ArrayList<>();
-
-        for (Map<String, Object> row : source) {
-            if (row == null || row.isEmpty()) {
-                continue;
-            }
-            if (term.isEmpty()) {
-                filtered.add(row);
-            } else {
-                String text = row.toString().toLowerCase(java.util.Locale.ROOT);
-                if (text.contains(term)) {
-                    filtered.add(row);
-                }
-            }
-            if (filtered.size() >= resolvedLimit) {
-                break;
-            }
-        }
-        return filtered;
-    }
 }
