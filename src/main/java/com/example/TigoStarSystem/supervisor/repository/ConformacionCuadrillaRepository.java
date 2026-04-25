@@ -478,6 +478,49 @@ public class ConformacionCuadrillaRepository {
     }
 
     /**
+     * Lista catalogo de Salesforce y Cuenta SF desde tbl_SalesForce.
+     */
+    public List<Map<String, Object>> listarSalesforce(String sucursal) {
+        String sql = "SELECT * FROM dbo.tbl_SalesForce";
+        String sucursalParam = normalizarSucursal(sucursal);
+        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
+
+        // 1) Operativa por defecto (uTecnicos): suele contener el catalogo activo.
+        mergeSalesforceRows(
+                merged,
+                queryForListSafe(jdbcTemplate, sql)
+        );
+
+        // 2) Sucursal resuelta (cuando difiere de operativa por defecto).
+        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
+        if (dbInfo != null) {
+            mergeSalesforceRows(
+                    merged,
+                    queryForListSafe(crearJdbcTemplateSucursal(dbInfo), sql)
+            );
+        }
+
+        // 3) Central (BDControlOrdenes) para completar faltantes.
+        mergeSalesforceRows(
+                merged,
+                queryForListSafe(centralJdbcTemplate, sql)
+        );
+
+        // 4) Sucre explicito cuando aplica.
+        if (dbSupport.isSucre(dbSupport.normalizeText(sucursalParam))) {
+            mergeSalesforceRows(
+                    merged,
+                    queryForListSafe(crearSucreJdbcTemplate(), sql)
+            );
+        }
+
+        if (!merged.isEmpty()) {
+            return new ArrayList<>(merged.values());
+        }
+        return normalizarCatalogoSalesforce(queryForListFallback(sql));
+    }
+
+    /**
      * Lista auxiliares usando el mismo catalogo de tecnicos.
      */
     public List<Map<String, Object>> listarAuxiliares() {
@@ -782,6 +825,41 @@ public class ConformacionCuadrillaRepository {
         return out;
     }
 
+    /**
+     * Busca un registro activo que ya use el mismo Salesforce en el contexto de fecha/sucursal.
+     * Se usa para bloquear duplicados al guardar/actualizar conformacion de cuadrillas.
+     */
+    public Map<String, Object> buscarRegistroActivoPorSalesforceEnContexto(
+            LocalDate fecha,
+            String sucursal,
+            String salesforce,
+            Long idExcluir) {
+        String salesforceParam = asTrimmedText(salesforce);
+        if (isBlank(salesforceParam)) {
+            return null;
+        }
+
+        String sucursalParam = normalizarSucursal(sucursal);
+        List<JdbcTemplate> templates = construirTemplatesEscritura(sucursalParam, idExcluir);
+        if (templates == null || templates.isEmpty()) {
+            return null;
+        }
+
+        for (JdbcTemplate template : templates) {
+            Map<String, Object> existente = buscarRegistroActivoPorSalesforceEnTemplate(
+                    template,
+                    fecha,
+                    sucursalParam,
+                    salesforceParam,
+                    idExcluir
+            );
+            if (existente != null && !existente.isEmpty()) {
+                return existente;
+            }
+        }
+        return null;
+    }
+
     // -------------------------------------------------------------------------
     // Helpers de acceso a datos
     // -------------------------------------------------------------------------
@@ -803,6 +881,69 @@ public class ConformacionCuadrillaRepository {
             return central == null ? new ArrayList<>() : central;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Busca en un template si ya existe un Salesforce activo para la misma fecha/sucursal.
+     */
+    private Map<String, Object> buscarRegistroActivoPorSalesforceEnTemplate(
+            JdbcTemplate template,
+            LocalDate fecha,
+            String sucursal,
+            String salesforce,
+            Long idExcluir) {
+        if (template == null || isBlank(salesforce)) {
+            return null;
+        }
+
+        List<Object> args = new ArrayList<>();
+        StringBuilder sql = new StringBuilder(
+                "SELECT TOP 1 id, tecnico, salesforce, fecha, sucursal " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE LOWER(LTRIM(RTRIM(ISNULL(CAST(salesforce AS NVARCHAR(250)), '')))) " +
+                        "      = LOWER(LTRIM(RTRIM(CAST(? AS NVARCHAR(250)))))"
+        );
+        args.add(salesforce);
+
+        if (fecha != null) {
+            sql.append(" AND CONVERT(date, fecha) = CONVERT(date, ?)");
+            args.add(Date.valueOf(fecha));
+        }
+        if (!isBlank(sucursal)) {
+            sql.append(" AND LOWER(REPLACE(REPLACE(REPLACE(ISNULL(CAST(sucursal AS VARCHAR(120)), ''), ' ', ''), '_', ''), '-', ''))");
+            sql.append(" = LOWER(REPLACE(REPLACE(REPLACE(?, ' ', ''), '_', ''), '-', ''))");
+            args.add(sucursal.trim());
+        }
+        if (idExcluir != null) {
+            sql.append(" AND id <> ?");
+            args.add(idExcluir);
+        }
+
+        // Prioriza registros no eliminados logicamente.
+        String sqlActivo = sql + " AND ISNULL(e_eliminado, 0) = 0 ORDER BY fechaRegistro DESC, id DESC";
+
+        try {
+            List<Map<String, Object>> rows = queryForList(template, sqlActivo, args.toArray());
+            if (rows != null && !rows.isEmpty()) {
+                return rows.get(0);
+            }
+        } catch (DataAccessException ex) {
+            // fallback sin e_eliminado para esquemas antiguos
+        }
+
+        try {
+            List<Map<String, Object>> rows = queryForList(
+                    template,
+                    sql + " ORDER BY fechaRegistro DESC, id DESC",
+                    args.toArray()
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            return rows.get(0);
+        } catch (DataAccessException ex) {
+            return null;
         }
     }
 
@@ -875,6 +1016,125 @@ public class ConformacionCuadrillaRepository {
             out.add(normalizada);
         }
         return out;
+    }
+
+    private List<Map<String, Object>> normalizarCatalogoSalesforce(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> normalizada = new LinkedHashMap<>();
+            if (row != null && !row.isEmpty()) {
+                normalizada.putAll(row);
+            } else {
+                continue;
+            }
+
+            Object salesforce = findValueCaseInsensitive(
+                    row,
+                    "salesforce",
+                    "SalesForce",
+                    "sales_force",
+                    "nombresalesforce",
+                    "nombre_salesforce"
+            );
+            Object cuenta = findValueCaseInsensitive(
+                    row,
+                    "cuentaSf",
+                    "cuenta_sf",
+                    "cuentasf",
+                    "CuentaSF",
+                    "cuenta"
+            );
+            String salesforceText = salesforce == null ? "" : String.valueOf(salesforce).trim();
+            String cuentaText = cuenta == null ? "" : String.valueOf(cuenta).trim();
+            if (salesforceText.isEmpty() && cuentaText.isEmpty()) {
+                continue;
+            }
+            if (salesforce != null) {
+                normalizada.put("salesforce", salesforce);
+            }
+            if (cuenta != null) {
+                normalizada.put("cuentaSf", cuenta);
+                normalizada.put("cuenta_sf", cuenta);
+            }
+            out.add(normalizada);
+        }
+        return out;
+    }
+
+    /**
+     * Ejecuta queryForList de forma segura y retorna lista vacia ante error.
+     */
+    private List<Map<String, Object>> queryForListSafe(JdbcTemplate template, String sql, Object... args) {
+        if (template == null || isBlank(sql)) {
+            return new ArrayList<>();
+        }
+        try {
+            List<Map<String, Object>> rows = queryForList(template, sql, args);
+            return rows == null ? new ArrayList<>() : rows;
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Mezcla filas de Salesforce sin perder datos y deduplicando por salesforce/cuenta.
+     */
+    private void mergeSalesforceRows(
+            Map<String, Map<String, Object>> target,
+            List<Map<String, Object>> rows) {
+        if (target == null || rows == null || rows.isEmpty()) {
+            return;
+        }
+
+        List<Map<String, Object>> normalizadas = normalizarCatalogoSalesforce(rows);
+        for (Map<String, Object> row : normalizadas) {
+            if (row == null || row.isEmpty()) {
+                continue;
+            }
+
+            String salesforce = asTrimmedText(findValueCaseInsensitive(
+                    row,
+                    "salesforce",
+                    "SalesForce",
+                    "sales_force"
+            ));
+            String cuentaSf = asTrimmedText(findValueCaseInsensitive(
+                    row,
+                    "cuentaSf",
+                    "cuenta_sf",
+                    "cuentasf",
+                    "CuentaSF"
+            ));
+
+            String keySource = !isBlank(salesforce) ? salesforce : cuentaSf;
+            if (isBlank(keySource)) {
+                continue;
+            }
+            String key = keySource.trim().toUpperCase(Locale.ROOT);
+
+            Map<String, Object> current = target.get(key);
+            if (current == null) {
+                target.put(key, new LinkedHashMap<>(row));
+                continue;
+            }
+            if (isBlank(asTrimmedText(current.get("salesforce"))) && !isBlank(salesforce)) {
+                current.put("salesforce", salesforce);
+            }
+            if (isBlank(asTrimmedText(current.get("cuentaSf"))) && !isBlank(cuentaSf)) {
+                current.put("cuentaSf", cuentaSf);
+                current.put("cuenta_sf", cuentaSf);
+            }
+        }
+    }
+
+    private String asTrimmedText(Object value) {
+        if (value == null) {
+            return "";
+        }
+        return String.valueOf(value).trim();
     }
 
     private Object findValueCaseInsensitive(Map<String, Object> row, String... candidates) {

@@ -108,10 +108,10 @@ final class ConformacionCuadrillaDbSupport {
         }
 
         return buildDbInfo(
-                uTecnicosHost,
-                uTecnicosDatabase,
                 hostSucursal,
                 baseSucursal,
+                uTecnicosHost,
+                uTecnicosDatabase,
                 dbUsername,
                 dbPassword,
                 dbUsername,

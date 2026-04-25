@@ -122,6 +122,17 @@ public class ConformacionCuadrillaController {
         ));
     }
 
+    @GetMapping({"/catalogos/salesforce", "/catalogos/sales-force"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarSalesforce(
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "sucursal", required = false) String sucursal) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarSalesforce(q, limit, sucursal),
+                "Listado de salesforce."
+        ));
+    }
+
     @GetMapping({"/catalogos/vehiculos", "/catalogos/vehiculo"})
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarVehiculos(
             @RequestParam(value = "filtro", required = false) String filtro) {

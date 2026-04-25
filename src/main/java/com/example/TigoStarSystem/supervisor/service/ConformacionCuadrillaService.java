@@ -77,6 +77,26 @@ public class ConformacionCuadrillaService {
     }
 
     /**
+     * Lista catalogo Salesforce/Cuenta SF desde tbl_SalesForce.
+     */
+    public List<Map<String, Object>> listarSalesforce(String q, Integer limit, String sucursal) {
+        List<Map<String, Object>> items = rowMapper.deduplicarPorPrimerCampoNoNulo(
+                repository.listarSalesforce(sucursal),
+                "salesforce",
+                "SalesForce"
+        );
+        return rowMapper.filtrarPorTextoYLimite(
+                items,
+                q,
+                limit,
+                "salesforce",
+                "cuenta_sf",
+                "cuentasf",
+                "cuentaSf"
+        );
+    }
+
+    /**
      * Lista auxiliares filtrados por texto y limite.
      */
     public List<Map<String, Object>> listarAuxiliares(String q, Integer limit) {
@@ -343,9 +363,49 @@ public class ConformacionCuadrillaService {
     public int guardar(ConformacionCuadrillaCreateRequest request) {
         validarRequestCreacion(request);
 
+        Map<String, Set<Integer>> tecnicosEnSolicitudPorContexto = new HashMap<>();
+        Map<String, Map<String, Integer>> salesforceEnSolicitudPorContexto = new HashMap<>();
+        for (int idx = 0; idx < request.getFilas().size(); idx++) {
+            ConformacionCuadrillaRowRequest fila = request.getFilas().get(idx);
+            validator.validarBackoffice(fila);
+            LocalDate fechaFila = resolverFecha(fila.getFecha());
+            String sucursalFila = SucursalCanonicalizer.canonicalize(toTrimmedString(fila.getSucursal()));
+            String contextKey = buildContextKey(fechaFila, sucursalFila);
+            Set<Integer> tecnicos = tecnicosEnSolicitudPorContexto.computeIfAbsent(contextKey, key -> new HashSet<>());
+            if (fila.getIdTecnico() != null) {
+                tecnicos.add(fila.getIdTecnico());
+            }
+            validarSalesforceNoDuplicadoEnSolicitud(
+                    fila,
+                    idx + 1,
+                    contextKey,
+                    salesforceEnSolicitudPorContexto
+            );
+            validarSalesforceNoDuplicadoEnBd(
+                    fila.getSalesforce(),
+                    fechaFila,
+                    sucursalFila,
+                    null,
+                    buildRowTecnicoPrefix(fila, idx + 1)
+            );
+        }
+
+        Map<String, Set<Integer>> tecnicosActivosPorContexto = new HashMap<>();
         int total = 0;
         for (ConformacionCuadrillaRowRequest fila : request.getFilas()) {
-            validator.validarBackoffice(fila);
+            LocalDate fechaFila = resolverFecha(fila.getFecha());
+            String sucursalFila = SucursalCanonicalizer.canonicalize(toTrimmedString(fila.getSucursal()));
+            String contextKey = buildContextKey(fechaFila, sucursalFila);
+            Set<Integer> tecnicosActivos = tecnicosActivosPorContexto.get(contextKey);
+            if (tecnicosActivos == null) {
+                tecnicosActivos = obtenerIdsTecnicosActivosPorContexto(fechaFila, sucursalFila, null);
+                tecnicosActivosPorContexto.put(contextKey, tecnicosActivos);
+            }
+            validarAuxiliarNoPuedeSerTecnicoActivo(
+                    fila.getIdTecnicoAuxiliar(),
+                    tecnicosActivos,
+                    tecnicosEnSolicitudPorContexto.get(contextKey)
+            );
             total += repository.guardarFilaConfirmada(fila);
         }
 
@@ -367,6 +427,24 @@ public class ConformacionCuadrillaService {
     public int actualizar(Long id, ConformacionCuadrillaRowRequest request) {
         validarId(id);
         validator.validarBackoffice(request);
+        LocalDate fechaFila = resolverFecha(request.getFecha());
+        String sucursalFila = SucursalCanonicalizer.canonicalize(toTrimmedString(request.getSucursal()));
+        validarSalesforceNoDuplicadoEnBd(
+                request.getSalesforce(),
+                fechaFila,
+                sucursalFila,
+                id,
+                "Registro"
+        );
+        Set<Integer> tecnicosRequest = new HashSet<>();
+        if (request.getIdTecnico() != null) {
+            tecnicosRequest.add(request.getIdTecnico());
+        }
+        validarAuxiliarNoPuedeSerTecnicoActivo(
+                request.getIdTecnicoAuxiliar(),
+                obtenerIdsTecnicosActivosPorContexto(fechaFila, sucursalFila, id),
+                tecnicosRequest
+        );
         int affected = repository.actualizarFila(id, request);
         if (affected > 0) {
             List<ConformacionCuadrillaRowRequest> filas = new ArrayList<>();
@@ -396,6 +474,13 @@ public class ConformacionCuadrillaService {
         }
         if (isBlankValue(request.getDigitador()) && request.getIdUsuarioDigitador() != null) {
             request.setDigitador(toTrimmedString(digitadoresById.get(request.getIdUsuarioDigitador())));
+        }
+        if (request.getIdTecnicoAuxiliar() != null && !isBlankValue(request.getSucursal())) {
+            validarAuxiliarNoPuedeSerTecnicoActivo(
+                    request.getIdTecnicoAuxiliar(),
+                    obtenerIdsTecnicosActivosPorContexto(resolverFecha(null), request.getSucursal(), null),
+                    null
+            );
         }
 
         return repository.guardarRelacionCuadrilla(request);
@@ -831,6 +916,168 @@ public class ConformacionCuadrillaService {
         }
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    /**
+     * Bloquea asignar como auxiliar a una persona que ya es tecnico activo.
+     */
+    private void validarAuxiliarNoPuedeSerTecnicoActivo(
+            Integer idTecnicoAuxiliar,
+            Set<Integer> tecnicosActivos,
+            Set<Integer> tecnicosEnSolicitud) {
+        if (idTecnicoAuxiliar == null) {
+            return;
+        }
+        Set<Integer> idsTecnicos = new HashSet<>();
+        if (tecnicosActivos != null) {
+            idsTecnicos.addAll(tecnicosActivos);
+        }
+        if (tecnicosEnSolicitud != null) {
+            idsTecnicos.addAll(tecnicosEnSolicitud);
+        }
+        if (idsTecnicos.contains(idTecnicoAuxiliar)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "El auxiliar seleccionado corresponde a un tecnico activo y no puede asignarse como auxiliar."
+            );
+        }
+    }
+
+    /**
+     * Bloquea Salesforce repetido dentro de la misma solicitud por fecha+sucursal.
+     */
+    private void validarSalesforceNoDuplicadoEnSolicitud(
+            ConformacionCuadrillaRowRequest fila,
+            int filaNumero,
+            String contextKey,
+            Map<String, Map<String, Integer>> salesforceEnSolicitudPorContexto) {
+        String salesforce = toTrimmedString(fila == null ? null : fila.getSalesforce());
+        if (isBlankValue(salesforce)) {
+            return;
+        }
+
+        String salesforceKey = normalizeKey(salesforce);
+        Map<String, Integer> salesforcePorContexto =
+                salesforceEnSolicitudPorContexto.computeIfAbsent(contextKey, key -> new HashMap<>());
+        Integer filaAnterior = salesforcePorContexto.putIfAbsent(salesforceKey, filaNumero);
+        if (filaAnterior != null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    buildRowTecnicoPrefix(fila, filaNumero)
+                            + ": el salesforce '" + salesforce + "' esta repetido en la solicitud (fila "
+                            + filaAnterior + ")."
+            );
+        }
+    }
+
+    /**
+     * Bloquea Salesforce repetido ya persistido en tbl_ConformacionCuadrillaDiario.
+     */
+    private void validarSalesforceNoDuplicadoEnBd(
+            String salesforce,
+            LocalDate fecha,
+            String sucursal,
+            Long idExcluir,
+            String errorPrefix) {
+        String salesforceValue = toTrimmedString(salesforce);
+        if (isBlankValue(salesforceValue)) {
+            return;
+        }
+
+        Map<String, Object> existente = repository.buscarRegistroActivoPorSalesforceEnContexto(
+                fecha,
+                sucursal,
+                salesforceValue,
+                idExcluir
+        );
+        if (existente == null || existente.isEmpty()) {
+            return;
+        }
+
+        Long idRegistro = valueAsLong(getCaseInsensitive(existente, "id", "Id"));
+        String tecnico = toTrimmedString(getCaseInsensitive(existente, "tecnico", "nombrevendedor", "vendedor", "nombre"));
+        StringBuilder detalle = new StringBuilder();
+        if (!isBlankValue(tecnico)) {
+            detalle.append(" | Tecnico: ").append(tecnico);
+        }
+        if (idRegistro != null) {
+            detalle.append(" | ID registro: ").append(idRegistro);
+        }
+
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                errorPrefix + ": el salesforce '" + salesforceValue
+                        + "' ya esta registrado en tbl_ConformacionCuadrillaDiario"
+                        + detalle + "."
+        );
+    }
+
+    private String buildRowTecnicoPrefix(ConformacionCuadrillaRowRequest fila, int filaNumero) {
+        String tecnico = toTrimmedString(fila == null ? null : fila.getTecnico());
+        if (isBlankValue(tecnico)) {
+            return "Fila " + filaNumero;
+        }
+        return "Fila " + filaNumero + " | Tecnico: " + tecnico;
+    }
+
+    /**
+     * Obtiene ids de tecnicos activos por fecha y sucursal desde BD central.
+     */
+    private Set<Integer> obtenerIdsTecnicosActivosPorContexto(LocalDate fecha, String sucursal, Long idExcluir) {
+        Set<Integer> idsTecnicos = new HashSet<>();
+        List<Map<String, Object>> rows = repository.listarConEliminadosCentral(fecha, sucursal, null, null);
+        if (rows == null || rows.isEmpty()) {
+            return idsTecnicos;
+        }
+        for (Map<String, Object> row : rows) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
+            Long idRegistro = valueAsLong(getCaseInsensitive(row, "id", "Id"));
+            if (idExcluir != null && idRegistro != null && idExcluir.equals(idRegistro)) {
+                continue;
+            }
+            Integer idTecnico = valueAsInteger(getCaseInsensitive(
+                    row,
+                    "idTecnico",
+                    "id_tecnico",
+                    "idtecnico",
+                    "id_vendedor",
+                    "idvendedor"
+            ));
+            if (idTecnico != null) {
+                idsTecnicos.add(idTecnico);
+            }
+        }
+        return idsTecnicos;
+    }
+
+    /**
+     * Convierte valor dinamico a Long de forma segura.
+     */
+    private Long valueAsLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Clave interna para cachear validaciones por fecha+sucursal.
+     */
+    private String buildContextKey(LocalDate fecha, String sucursal) {
+        String fechaKey = fecha == null ? "" : fecha.toString();
+        return fechaKey + "|" + normalizeKey(toTrimmedString(sucursal));
     }
 
     /**

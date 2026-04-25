@@ -34,8 +34,6 @@ public class ConformacionCuadrillaWebRepository {
             "EXEC dbo.spx_EliminarConformacionCuadrillaWeb ?";
     private static final String SP_TECNICOS =
             "EXEC dbo.spx_ObtenerTecnicosConformacionCuadrillaWeb";
-    private static final String SP_TECNICOS_POR_SUPERVISOR =
-            "EXEC dbo.spx_ObtenerTecnicosConformacionCuadrillaWebPorSupervisor ?";
     private static final String SP_TECNICO_DETALLE =
             "EXEC dbo.spx_ObtenerDatosTecnicoConformacionCuadrillaWeb ?";
     private static final String SP_AUXILIARES =
@@ -47,7 +45,7 @@ public class ConformacionCuadrillaWebRepository {
     private static final String SP_ACTIVIDADES =
             "EXEC dbo.spx_ObtenerActividadesConformacionCuadrillaWeb";
     private static final String SP_VEHICULOS =
-            "EXEC dbo.spx_ObtenerVehiculosConformacionCuadrillaWeb ?";
+            "EXEC dbo.spx_ObtenerVehiculosConformacionCuadrillaWeb";
     private static final String SP_SUCURSALES =
             "EXEC dbo.spx_ObtenerSucursalesConformacionCuadrillaWeb";
 
@@ -240,17 +238,11 @@ public class ConformacionCuadrillaWebRepository {
         return toLong(idValue);
     }
 
-    public List<Map<String, Object>> listarTecnicos(String sucursal, Integer idUsuarioSupervisor) {
-        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo =
-                dbSupport.resolverSucursalDbInfo(trimToNull(sucursal));
+    public List<Map<String, Object>> listarTecnicos(String sucursal) {
         List<Map<String, Object>> rows = queryForListInSucursal(
-                dbInfo,
-                SP_TECNICOS_POR_SUPERVISOR,
-                idUsuarioSupervisor
+                dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
+                SP_TECNICOS
         );
-        if (rows == null || rows.isEmpty()) {
-            rows = queryTecnicosPorSupervisorFallbackInSucursal(dbInfo, idUsuarioSupervisor);
-        }
         return normalizarDatosTecnicos(rows);
     }
 
@@ -263,17 +255,11 @@ public class ConformacionCuadrillaWebRepository {
         return normalizarDatosTecnicos(rows);
     }
 
-    public List<Map<String, Object>> listarAuxiliares(String sucursal, Integer idUsuarioSupervisor) {
-        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo =
-                dbSupport.resolverSucursalDbInfo(trimToNull(sucursal));
+    public List<Map<String, Object>> listarAuxiliares(String sucursal) {
         List<Map<String, Object>> rows = queryForListInSucursal(
-                dbInfo,
-                SP_TECNICOS_POR_SUPERVISOR,
-                idUsuarioSupervisor
+                dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
+                SP_AUXILIARES
         );
-        if (rows == null || rows.isEmpty()) {
-            rows = queryTecnicosPorSupervisorFallbackInSucursal(dbInfo, idUsuarioSupervisor);
-        }
         return normalizarCatalogoAuxiliares(normalizarDatosTecnicos(rows));
     }
 
@@ -295,11 +281,11 @@ public class ConformacionCuadrillaWebRepository {
 
     public List<Map<String, Object>> listarVehiculos(String sucursal, String filtro) {
         String filtroParam = trimToNull(filtro);
-        return queryForListInSucursal(
+        List<Map<String, Object>> rows = queryForListOnlyInResolvedSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
-                SP_VEHICULOS,
-                filtroParam
+                SP_VEHICULOS
         );
+        return filtrarVehiculos(rows, filtroParam);
     }
 
     public List<Map<String, Object>> listarSucursales(String sucursal) {
@@ -313,14 +299,32 @@ public class ConformacionCuadrillaWebRepository {
         if (dbInfo != null) {
             try {
                 List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
+                return rows == null ? new ArrayList<>() : rows;
             } catch (DataAccessException ex) {
                 // fallback below
             }
         }
 
+        try {
+            List<Map<String, Object>> rows = queryForList(jdbcTemplate, sql, args);
+            return rows == null ? new ArrayList<>() : rows;
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> queryForListOnlyInResolvedSucursal(
+            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
+            String sql,
+            Object... args) {
+        if (dbInfo != null) {
+            try {
+                List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
+                return rows == null ? new ArrayList<>() : rows;
+            } catch (DataAccessException ex) {
+                return new ArrayList<>();
+            }
+        }
         try {
             List<Map<String, Object>> rows = queryForList(jdbcTemplate, sql, args);
             return rows == null ? new ArrayList<>() : rows;
@@ -353,149 +357,6 @@ public class ConformacionCuadrillaWebRepository {
             return null;
         }
         return rows.get(0);
-    }
-
-    private List<Map<String, Object>> queryTecnicosPorSupervisorFallbackInSucursal(
-            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
-            Integer idUsuarioSupervisor) {
-        if (idUsuarioSupervisor == null || idUsuarioSupervisor <= 0) {
-            return new ArrayList<>();
-        }
-        if (dbInfo != null) {
-            try {
-                JdbcTemplate templateSucursal = dbSupport.crearJdbcTemplateSucursal(dbInfo);
-                List<Map<String, Object>> rows = queryTecnicosPorSupervisorFallback(templateSucursal, idUsuarioSupervisor);
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (RuntimeException ignored) {
-                // fallback below
-            }
-        }
-        try {
-            List<Map<String, Object>> rows = queryTecnicosPorSupervisorFallback(jdbcTemplate, idUsuarioSupervisor);
-            return rows == null ? new ArrayList<>() : rows;
-        } catch (RuntimeException ex) {
-            return new ArrayList<>();
-        }
-    }
-
-    private List<Map<String, Object>> queryTecnicosPorSupervisorFallback(
-            JdbcTemplate template,
-            Integer idUsuarioSupervisor) {
-        if (template == null || idUsuarioSupervisor == null || idUsuarioSupervisor <= 0) {
-            return new ArrayList<>();
-        }
-        String sql =
-                "DECLARE @IdUsuarioSupervisor INT = ?; " +
-                        "DECLARE @TablaTecnico SYSNAME = NULL; " +
-                        "DECLARE @ColPkTecnico SYSNAME = NULL; " +
-                        "DECLARE @ColIdVendedor SYSNAME = NULL; " +
-                        "DECLARE @Sql NVARCHAR(MAX); " +
-                        "IF OBJECT_ID('dbo.tbl_usuario_tecnico', 'U') IS NOT NULL SET @TablaTecnico = 'dbo.tbl_usuario_tecnico'; " +
-                        "ELSE IF OBJECT_ID('dbo.tbl_UsuarioTecnico', 'U') IS NOT NULL SET @TablaTecnico = 'dbo.tbl_UsuarioTecnico'; " +
-                        "ELSE IF OBJECT_ID('dbo.tbl_Usuario_Tecnico', 'U') IS NOT NULL SET @TablaTecnico = 'dbo.tbl_Usuario_Tecnico'; " +
-                        "IF @TablaTecnico IS NULL " +
-                        "BEGIN " +
-                        "  ;WITH TecnicosDelSupervisor AS ( " +
-                        "    SELECT DISTINCT dg.id_usuario_tecnico " +
-                        "    FROM dbo.tbl_GrupoSup gs " +
-                        "    INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = gs.id_grupo " +
-                        "    INNER JOIN dbo.tbl_Grupo g ON g.id_grupo = gs.id_grupo " +
-                        "    WHERE gs.id_usuario = @IdUsuarioSupervisor AND ISNULL(g.e_eliminado,0) = 0 " +
-                        "  ) " +
-                        "  SELECT v.Id_Vendedor AS id_tecnico, v.Nombre AS tecnico, v.CodEmpleado AS cod_empleado, " +
-                        "         v.CuentaSF AS cuenta_sf, v.SalesForce AS salesforce, v.Habilidad AS habilidad, " +
-                        "         v.Vehiculo AS vehiculo, ruta.Id_Ruta AS id_ruta, ruta.Nombre AS grupo, " +
-                        "         ruta.BodegaTigo AS almacen, ruta.BodegaTigo AS grupoDigitacion, v.* " +
-                        "  FROM TecnicosDelSupervisor ts " +
-                        "  INNER JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ts.id_usuario_tecnico " +
-                        "  OUTER APPLY ( " +
-                        "      SELECT TOP 1 r.Id_Ruta, r.Nombre, r.BodegaTigo " +
-                        "      FROM dbo.tbl_Ruta r " +
-                        "      WHERE r.Id_Vendedor = v.Id_Vendedor AND ISNULL(r.E_Eliminado,0) = 0 " +
-                        "      ORDER BY r.Id_Ruta " +
-                        "  ) ruta " +
-                        "  WHERE v.E_Eliminado = 0 " +
-                        "  ORDER BY v.Nombre; " +
-                        "  RETURN; " +
-                        "END; " +
-                        "IF COL_LENGTH(@TablaTecnico, 'id_usuario_tecnico') IS NOT NULL SET @ColPkTecnico = 'id_usuario_tecnico'; " +
-                        "ELSE IF COL_LENGTH(@TablaTecnico, 'idUsuarioTecnico') IS NOT NULL SET @ColPkTecnico = 'idUsuarioTecnico'; " +
-                        "ELSE IF COL_LENGTH(@TablaTecnico, 'Id_Usuario_Tecnico') IS NOT NULL SET @ColPkTecnico = 'Id_Usuario_Tecnico'; " +
-                        "ELSE IF COL_LENGTH(@TablaTecnico, 'id') IS NOT NULL SET @ColPkTecnico = 'id'; " +
-                        "IF COL_LENGTH(@TablaTecnico, 'id_vendedor') IS NOT NULL SET @ColIdVendedor = 'id_vendedor'; " +
-                        "ELSE IF COL_LENGTH(@TablaTecnico, 'id_Vendedor') IS NOT NULL SET @ColIdVendedor = 'id_Vendedor'; " +
-                        "IF @ColPkTecnico IS NULL OR @ColIdVendedor IS NULL " +
-                        "BEGIN " +
-                        "  ;WITH TecnicosDelSupervisor AS ( " +
-                        "    SELECT DISTINCT dg.id_usuario_tecnico " +
-                        "    FROM dbo.tbl_GrupoSup gs " +
-                        "    INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = gs.id_grupo " +
-                        "    INNER JOIN dbo.tbl_Grupo g ON g.id_grupo = gs.id_grupo " +
-                        "    WHERE gs.id_usuario = @IdUsuarioSupervisor AND ISNULL(g.e_eliminado,0) = 0 " +
-                        "  ) " +
-                        "  SELECT v.Id_Vendedor AS id_tecnico, v.Nombre AS tecnico, v.CodEmpleado AS cod_empleado, " +
-                        "         v.CuentaSF AS cuenta_sf, v.SalesForce AS salesforce, v.Habilidad AS habilidad, " +
-                        "         v.Vehiculo AS vehiculo, ruta.Id_Ruta AS id_ruta, ruta.Nombre AS grupo, " +
-                        "         ruta.BodegaTigo AS almacen, ruta.BodegaTigo AS grupoDigitacion, v.* " +
-                        "  FROM TecnicosDelSupervisor ts " +
-                        "  INNER JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ts.id_usuario_tecnico " +
-                        "  OUTER APPLY ( " +
-                        "      SELECT TOP 1 r.Id_Ruta, r.Nombre, r.BodegaTigo " +
-                        "      FROM dbo.tbl_Ruta r " +
-                        "      WHERE r.Id_Vendedor = v.Id_Vendedor AND ISNULL(r.E_Eliminado,0) = 0 " +
-                        "      ORDER BY r.Id_Ruta " +
-                        "  ) ruta " +
-                        "  WHERE v.E_Eliminado = 0 " +
-                        "  ORDER BY v.Nombre; " +
-                        "  RETURN; " +
-                        "END; " +
-                        "SET @Sql = N' " +
-                        "  ;WITH TecnicosDelSupervisor AS ( " +
-                        "    SELECT DISTINCT dg.id_usuario_tecnico " +
-                        "    FROM dbo.tbl_GrupoSup gs " +
-                        "    INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = gs.id_grupo " +
-                        "    INNER JOIN dbo.tbl_Grupo g ON g.id_grupo = gs.id_grupo " +
-                        "    WHERE gs.id_usuario = @IdUsuarioSupervisor AND ISNULL(g.e_eliminado,0) = 0 " +
-                        "  ), TecnicosResueltos AS ( " +
-                        "    SELECT DISTINCT ut.' + QUOTENAME(@ColIdVendedor) + N' AS id_vendedor " +
-                        "    FROM TecnicosDelSupervisor ts " +
-                        "    INNER JOIN ' + @TablaTecnico + N' ut ON ut.' + QUOTENAME(@ColPkTecnico) + N' = ts.id_usuario_tecnico " +
-                        "    WHERE (COL_LENGTH(''''' + @TablaTecnico + N''''', ''''e_eliminado'''') IS NULL OR ISNULL(ut.e_eliminado,0)=0) " +
-                        "      AND ut.' + QUOTENAME(@ColIdVendedor) + N' IS NOT NULL " +
-                        "    UNION " +
-                        "    SELECT DISTINCT ut.' + QUOTENAME(@ColIdVendedor) + N' AS id_vendedor " +
-                        "    FROM TecnicosDelSupervisor ts " +
-                        "    INNER JOIN ' + @TablaTecnico + N' ut ON ut.' + QUOTENAME(@ColIdVendedor) + N' = ts.id_usuario_tecnico " +
-                        "    WHERE (COL_LENGTH(''''' + @TablaTecnico + N''''', ''''e_eliminado'''') IS NULL OR ISNULL(ut.e_eliminado,0)=0) " +
-                        "      AND ut.' + QUOTENAME(@ColIdVendedor) + N' IS NOT NULL " +
-                        "    UNION " +
-                        "    SELECT DISTINCT ts.id_usuario_tecnico AS id_vendedor " +
-                        "    FROM TecnicosDelSupervisor ts " +
-                        "    WHERE ts.id_usuario_tecnico IS NOT NULL " +
-                        "  ) " +
-                        "  SELECT v.Id_Vendedor AS id_tecnico, v.Nombre AS tecnico, v.CodEmpleado AS cod_empleado, " +
-                        "         v.CuentaSF AS cuenta_sf, v.SalesForce AS salesforce, v.Habilidad AS habilidad, " +
-                        "         v.Vehiculo AS vehiculo, ruta.Id_Ruta AS id_ruta, ruta.Nombre AS grupo, " +
-                        "         ruta.BodegaTigo AS almacen, ruta.BodegaTigo AS grupoDigitacion, v.* " +
-                        "  FROM TecnicosResueltos tr " +
-                        "  INNER JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = tr.id_vendedor " +
-                        "  OUTER APPLY ( " +
-                        "      SELECT TOP 1 r.Id_Ruta, r.Nombre, r.BodegaTigo " +
-                        "      FROM dbo.tbl_Ruta r " +
-                        "      WHERE r.Id_Vendedor = v.Id_Vendedor AND ISNULL(r.E_Eliminado,0) = 0 " +
-                        "      ORDER BY r.Id_Ruta " +
-                        "  ) ruta " +
-                        "  WHERE v.E_Eliminado = 0 " +
-                        "  ORDER BY v.Nombre;'; " +
-                        "EXEC sp_executesql @Sql, N'@IdUsuarioSupervisor INT', @IdUsuarioSupervisor = @IdUsuarioSupervisor;";
-
-        try {
-            return template.queryForList(sql, idUsuarioSupervisor);
-        } catch (RuntimeException ex) {
-            return new ArrayList<>();
-        }
     }
 
     private List<JdbcTemplate> construirTemplatesEscritura(String sucursal) {
@@ -861,6 +722,36 @@ public class ConformacionCuadrillaWebRepository {
                 normalizada.put(nombreCanonico, nombre);
             }
             out.add(normalizada);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarVehiculos(List<Map<String, Object>> rows, String filtro) {
+        List<Map<String, Object>> source = rows == null ? new ArrayList<>() : rows;
+        String filtroNormalizado = trimToNull(filtro);
+        if (filtroNormalizado == null) {
+            return source;
+        }
+
+        String comparable = filtroNormalizado
+                .replace("%", "")
+                .replace("*", "")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+        if (comparable.isEmpty()) {
+            return source;
+        }
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : source) {
+            Object vehiculo = findValue(row, "vehiculo", "Vehiculo", "placa", "Placa", "placaVehiculo", "placavehiculo");
+            if (vehiculo == null) {
+                continue;
+            }
+            String value = vehiculo.toString().trim().toLowerCase(Locale.ROOT);
+            if (!value.isEmpty() && value.contains(comparable)) {
+                out.add(row);
+            }
         }
         return out;
     }

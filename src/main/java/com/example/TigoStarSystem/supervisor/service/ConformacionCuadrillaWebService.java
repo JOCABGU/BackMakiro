@@ -15,9 +15,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class ConformacionCuadrillaWebService {
@@ -26,6 +28,7 @@ public class ConformacionCuadrillaWebService {
     private final ConformacionCuadrillaMailService mailService;
     private final ConformacionCuadrillaRequestValidator validator;
     private final AuthService authService;
+    private final ConformacionCuadrillaRowMapper rowMapper;
 
     /**
      * Inicializa el servicio web de conformacion de cuadrilla.
@@ -40,6 +43,7 @@ public class ConformacionCuadrillaWebService {
         this.mailService = mailService;
         this.authService = authService;
         this.validator = new ConformacionCuadrillaRequestValidator();
+        this.rowMapper = new ConformacionCuadrillaRowMapper();
     }
 
     /**
@@ -97,6 +101,20 @@ public class ConformacionCuadrillaWebService {
     public ConformacionCuadrillaWebResponse crear(ConformacionCuadrillaWebRequest request, String token) {
         completarContextoSesion(request, token);
         validator.validarWeb(request);
+        validarAuxiliarNoPuedeSerTecnicoActivo(
+                request.getIdTecnicoAuxiliar(),
+                request.getIdTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                null
+        );
+        validarSalesforceNoDuplicado(
+                request.getSalesforce(),
+                request.getFecha(),
+                request.getSucursal(),
+                null,
+                "Registro"
+        );
         Long id = repository.crear(request);
         if (id == null) {
             throw new ApiException(
@@ -118,6 +136,20 @@ public class ConformacionCuadrillaWebService {
         validarId(id);
         completarContextoSesion(request, token);
         validator.validarWeb(request);
+        validarAuxiliarNoPuedeSerTecnicoActivo(
+                request.getIdTecnicoAuxiliar(),
+                request.getIdTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                id
+        );
+        validarSalesforceNoDuplicado(
+                request.getSalesforce(),
+                request.getFecha(),
+                request.getSucursal(),
+                id,
+                "Registro"
+        );
         int affected = repository.actualizar(id, request);
         if (affected == 0) {
             int affectedBackoffice = backofficeRepository.actualizarFila(id, mapToBackOfficeRow(request));
@@ -209,13 +241,8 @@ public class ConformacionCuadrillaWebService {
      * Lista tecnicos para el formulario web aplicando busqueda y limite.
      */
     public List<Map<String, Object>> listarTecnicos(String q, Integer limit, String sucursal, String token) {
-        Integer idUsuarioSupervisor = resolveIdUsuarioSesion(token);
         String sucursalResuelta = resolveSucursalNombre(sucursal, token);
-        return TecnicoSearchUtil.filterAndLimit(
-                repository.listarTecnicos(sucursalResuelta, idUsuarioSupervisor),
-                q,
-                limit
-        );
+        return TecnicoSearchUtil.filterAndLimit(repository.listarTecnicos(sucursalResuelta), q, limit);
     }
 
     /**
@@ -237,8 +264,7 @@ public class ConformacionCuadrillaWebService {
      * Lista auxiliares disponibles en la sucursal resuelta.
      */
     public List<Map<String, Object>> listarAuxiliares(String sucursal, String token) {
-        Integer idUsuarioSupervisor = resolveIdUsuarioSesion(token);
-        return repository.listarAuxiliares(resolveSucursalNombre(sucursal, token), idUsuarioSupervisor);
+        return repository.listarAuxiliares(resolveSucursalNombre(sucursal, token));
     }
 
     /**
@@ -253,6 +279,27 @@ public class ConformacionCuadrillaWebService {
      */
     public List<Map<String, Object>> listarSupervisores(String sucursal, String token) {
         return repository.listarSupervisores(resolveSucursalNombre(sucursal, token));
+    }
+
+    /**
+     * Lista catalogo Salesforce/Cuenta SF desde tbl_SalesForce segun sucursal resuelta.
+     */
+    public List<Map<String, Object>> listarSalesforce(String q, Integer limit, String sucursal, String token) {
+        String sucursalResuelta = resolveSucursalNombre(sucursal, token);
+        List<Map<String, Object>> items = rowMapper.deduplicarPorPrimerCampoNoNulo(
+                backofficeRepository.listarSalesforce(sucursalResuelta),
+                "salesforce",
+                "SalesForce"
+        );
+        return rowMapper.filtrarPorTextoYLimite(
+                items,
+                q,
+                limit,
+                "salesforce",
+                "cuenta_sf",
+                "cuentasf",
+                "cuentaSf"
+        );
     }
 
     /**
@@ -463,6 +510,110 @@ public class ConformacionCuadrillaWebService {
     }
 
     /**
+     * Bloquea asignar como auxiliar a una persona que ya es tecnico activo.
+     */
+    private void validarAuxiliarNoPuedeSerTecnicoActivo(
+            Integer idTecnicoAuxiliar,
+            Integer idTecnicoRequest,
+            LocalDate fecha,
+            String sucursal,
+            Long idExcluir) {
+        if (idTecnicoAuxiliar == null) {
+            return;
+        }
+        Set<Integer> idsTecnicos = obtenerIdsTecnicosActivos(resolverFecha(fecha), sucursal, idExcluir);
+        if (idTecnicoRequest != null) {
+            idsTecnicos.add(idTecnicoRequest);
+        }
+        if (idsTecnicos.contains(idTecnicoAuxiliar)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "El auxiliar seleccionado corresponde a un tecnico activo y no puede asignarse como auxiliar."
+            );
+        }
+    }
+
+    /**
+     * Lee ids de tecnicos activos del dia/sucursal desde BD central.
+     */
+    private Set<Integer> obtenerIdsTecnicosActivos(LocalDate fecha, String sucursal, Long idExcluir) {
+        Set<Integer> idsTecnicos = new HashSet<>();
+        List<Map<String, Object>> rows = backofficeRepository.listarConEliminadosCentral(fecha, sucursal, null, null);
+        if (rows == null || rows.isEmpty()) {
+            return idsTecnicos;
+        }
+        for (Map<String, Object> row : rows) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
+            Long idRegistro = toLong(readValue(row, "id", "Id"));
+            if (idExcluir != null && idRegistro != null && idExcluir.equals(idRegistro)) {
+                continue;
+            }
+            Integer idTecnico = toInteger(readValue(row, "idTecnico", "id_tecnico", "idtecnico", "id_vendedor", "idvendedor"));
+            if (idTecnico != null) {
+                idsTecnicos.add(idTecnico);
+            }
+        }
+        return idsTecnicos;
+    }
+
+    /**
+     * Bloquea Salesforce repetido ya persistido en tbl_ConformacionCuadrillaDiario.
+     */
+    private void validarSalesforceNoDuplicado(
+            String salesforce,
+            LocalDate fecha,
+            String sucursal,
+            Long idExcluir,
+            String errorPrefix) {
+        String salesforceValue = toString(salesforce);
+        if (isBlank(salesforceValue)) {
+            return;
+        }
+        String salesforceTrimmed = salesforceValue.trim();
+        if (salesforceTrimmed.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> existente = backofficeRepository.buscarRegistroActivoPorSalesforceEnContexto(
+                resolverFecha(fecha),
+                sucursal,
+                salesforceTrimmed,
+                idExcluir
+        );
+        if (existente == null || existente.isEmpty()) {
+            return;
+        }
+
+        Long idRegistro = toLong(readValue(existente, "id", "Id"));
+        String tecnico = toString(readValue(existente, "tecnico", "nombrevendedor", "vendedor", "nombre"));
+        StringBuilder detalle = new StringBuilder();
+        if (!isBlank(tecnico)) {
+            detalle.append(" | Tecnico: ").append(tecnico.trim());
+        }
+        if (idRegistro != null) {
+            detalle.append(" | ID registro: ").append(idRegistro);
+        }
+
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                errorPrefix + ": el salesforce '" + salesforceTrimmed
+                        + "' ya esta registrado en tbl_ConformacionCuadrillaDiario"
+                        + detalle + "."
+        );
+    }
+
+    /**
+     * Usa fecha actual cuando no se envia fecha en request.
+     */
+    private LocalDate resolverFecha(LocalDate fecha) {
+        return fecha == null ? LocalDate.now() : fecha;
+    }
+
+    /**
      * Resuelve nombre de sucursal con prioridad: parametro > token > id como texto.
      */
     private String resolveSucursalNombre(String sucursal, String token) {
@@ -493,18 +644,5 @@ public class ConformacionCuadrillaWebService {
      */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    private Integer resolveIdUsuarioSesion(String token) {
-        AuthMeResponse me = authService.me(token);
-        Integer idUsuarioSupervisor = me.getUsuario() == null ? null : me.getUsuario().getIdUsuario();
-        if (idUsuarioSupervisor == null || idUsuarioSupervisor <= 0) {
-            throw new ApiException(
-                    HttpStatus.UNAUTHORIZED,
-                    "SESSION_INVALID",
-                    "No se pudo resolver el supervisor de la sesion."
-            );
-        }
-        return idUsuarioSupervisor;
     }
 }
