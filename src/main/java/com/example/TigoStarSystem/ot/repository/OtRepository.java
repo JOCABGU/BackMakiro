@@ -1,27 +1,38 @@
 package com.example.TigoStarSystem.ot.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 @Repository
 public class OtRepository {
+    private static final Logger logger = LoggerFactory.getLogger(OtRepository.class);
     private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate centralJdbcTemplate;
     private final OtDbSupport dbSupport;
 
     public OtRepository(
             JdbcTemplate jdbcTemplate,
+            @Qualifier("centralJdbcTemplate") JdbcTemplate centralJdbcTemplate,
             SucursalRepository sucursalRepository,
             @Value("${spring.datasource.driver-class-name}") String dbDriver,
             @Value("${spring.datasource.url}") String mainDatasourceUrl,
@@ -31,6 +42,7 @@ public class OtRepository {
             @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucrePassword,
             @Value("${app.datasource.params:encrypt=false;trustServerCertificate=true}") String dbParams) {
         this.jdbcTemplate = jdbcTemplate;
+        this.centralJdbcTemplate = centralJdbcTemplate;
         this.dbSupport = new OtDbSupport(
                 sucursalRepository,
                 dbDriver,
@@ -44,10 +56,19 @@ public class OtRepository {
     }
 
     public List<Map<String, Object>> obtenerOrdenesPorFecha(LocalDate fecha, Integer idSucursal) {
-        return template(idSucursal).queryForList(
-                "EXEC sp_ObtenerListaOrdenesTrabajo ?",
-                sqlDate(fecha)
-        );
+        JdbcTemplate target = template(idSucursal);
+        Date fechaSql = sqlDate(fecha);
+        try {
+            return target.queryForList(
+                    "EXEC sp_ObtenerListaOrdenesTrabajo_OTWEB ?",
+                    fechaSql
+            );
+        } catch (DataAccessException ex) {
+            return target.queryForList(
+                    "EXEC sp_ObtenerListaOrdenesTrabajo ?",
+                    fechaSql
+            );
+        }
     }
 
     public List<Map<String, Object>> obtenerOrdenesPorRango(LocalDate inicio, LocalDate fin, Integer idSucursal) {
@@ -58,6 +79,109 @@ public class OtRepository {
         );
     }
 
+    public List<Map<String, Object>> obtenerVentasFinalizadasPorFechaYVendedores(
+            LocalDate fecha,
+            List<Integer> idsVendedor,
+            Integer idSucursal) {
+        if (idsVendedor == null || idsVendedor.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Integer> idsValidos = new ArrayList<>();
+        for (Integer id : idsVendedor) {
+            if (id != null && id > 0 && !idsValidos.contains(id)) {
+                idsValidos.add(id);
+            }
+        }
+        if (idsValidos.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        StringBuilder idsCsvBuilder = new StringBuilder();
+        for (Integer id : idsValidos) {
+            if (id == null || id <= 0) continue;
+            if (idsCsvBuilder.length() > 0) {
+                idsCsvBuilder.append(",");
+            }
+            idsCsvBuilder.append(id);
+        }
+        String idsCsv = idsCsvBuilder.toString();
+
+        JdbcTemplate target = template(idSucursal);
+        try {
+            return target.queryForList(
+                    "EXEC dbo.spx_ListarOtFinalizadas ?, ?, ?",
+                    sqlDate(fecha),
+                    idsValidos.get(0),
+                    idsCsv
+            );
+        } catch (DataAccessException ex) {
+            // Fallback temporal al SQL directo mientras se despliega el SP
+        }
+
+        StringBuilder inClause = new StringBuilder();
+        for (int i = 0; i < idsValidos.size(); i++) {
+            if (i > 0) {
+                inClause.append(", ");
+            }
+            inClause.append("?");
+        }
+
+        String[] sqlVariants = new String[] {
+                "SELECT " +
+                        "v.Id_Venta AS idVenta, " +
+                        "v.OrdenTrabajo AS ordenTrabajo, " +
+                        "v.CodigoCliente AS codigoCliente, " +
+                        "v.Fecha_Ejecucion AS fechaEjecucion, " +
+                        "v.Origen AS origen, " +
+                        "v.Id_Vendedor AS idVendedor, " +
+                        "v.Id_TipoServicio AS idTipoServicio, " +
+                        "ts.Nombre AS tipoServicio, " +
+                        "v.Id_Estado AS idEstado, " +
+                        "e.Nombre AS estado " +
+                        "FROM dbo.tbl_Venta v " +
+                        "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
+                        "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
+                        "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "AND CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
+                        "AND v.Id_Vendedor IN (" + inClause + ") " +
+                        "ORDER BY v.Id_Venta DESC",
+                "SELECT " +
+                        "v.id_venta AS idVenta, " +
+                        "v.ordentrabajo AS ordenTrabajo, " +
+                        "v.codigocliente AS codigoCliente, " +
+                        "v.fecha_ejecucion AS fechaEjecucion, " +
+                        "v.origen AS origen, " +
+                        "v.id_vendedor AS idVendedor, " +
+                        "v.id_tiposervicio AS idTipoServicio, " +
+                        "ts.nombre AS tipoServicio, " +
+                        "v.id_estado AS idEstado, " +
+                        "e.nombre AS estado " +
+                        "FROM dbo.tbl_venta v " +
+                        "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.id_tiposervicio = v.id_tiposervicio " +
+                        "LEFT JOIN dbo.tbl_estado e ON e.id_estado = v.id_estado " +
+                        "WHERE CONVERT(DATE, v.fecha_ejecucion) = ? " +
+                        "AND v.id_vendedor IN (" + inClause + ") " +
+                        "ORDER BY v.id_venta DESC"
+        };
+
+        List<Object> params = new ArrayList<>();
+        params.add(sqlDate(fecha));
+        params.addAll(idsValidos);
+        RuntimeException lastError = null;
+        for (String sql : sqlVariants) {
+            try {
+                return target.queryForList(sql, params.toArray());
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+        if (lastError != null) {
+            logger.warn("No se pudo listar OT finalizadas con SQL fallback: {}", lastError.getMessage());
+        }
+        return Collections.emptyList();
+    }
+
     public List<Map<String, Object>> obtenerOrdenTrabajoPorNumero(String numeroOrden, Integer idSucursal) {
         return template(idSucursal).queryForList(
                 "EXEC sp_ObtenerOrdenTrabajo_X_Numero ?",
@@ -66,9 +190,11 @@ public class OtRepository {
     }
 
     public List<Map<String, Object>> obtenerOrdenTrabajoPorIdVenta(Long idVenta, Integer idSucursal) {
-        return template(idSucursal).queryForList(
-                "EXEC sp_ObtenerOrdenTrabajo_X_Id_Venta ?",
-                idVenta
+        return queryForListByIdVentaConSpAlternativos(
+                idVenta,
+                idSucursal,
+                "sp_ObtenerCabezeraOrdenTrabajo_X_Numero",
+                "sp_ObtenerOrdenTrabajo_X_Id_Venta"
         );
     }
 
@@ -80,17 +206,23 @@ public class OtRepository {
     }
 
     public List<Map<String, Object>> obtenerDetalleInstalado(Long idVenta, Integer idSucursal) {
-        return template(idSucursal).queryForList(
-                "EXEC sp_ObtenerDetalleVenta_Instalado_X_ID ?",
-                idVenta
+        List<Map<String, Object>> rows = queryForListByIdVentaConSpAlternativos(
+                idVenta,
+                idSucursal,
+                "sp_ObtenerInstalado_X_Numero",
+                "sp_ObtenerDetalleVenta_Instalado_X_ID"
         );
+        return enrichRowsConTipoMaterial(rows, idVenta, idSucursal);
     }
 
     public List<Map<String, Object>> obtenerDetalleRetirado(Long idVenta, Integer idSucursal) {
-        return template(idSucursal).queryForList(
-                "EXEC sp_ObtenerDetalleVenta_Retirado_X_ID ?",
-                idVenta
+        List<Map<String, Object>> rows = queryForListByIdVentaConSpAlternativos(
+                idVenta,
+                idSucursal,
+                "sp_ObteneRetirado_X_Numero",
+                "sp_ObtenerDetalleVenta_Retirado_X_ID"
         );
+        return enrichRowsConTipoMaterial(rows, idVenta, idSucursal);
     }
 
     public List<Map<String, Object>> obtenerDetalleExcedente(Long idVenta, Integer idSucursal) {
@@ -101,10 +233,201 @@ public class OtRepository {
     }
 
     public List<Map<String, Object>> obtenerDetalleCargoUsuario(Long idVenta, Integer idSucursal) {
+        List<Map<String, Object>> rows = queryForListByIdVentaConSpAlternativos(
+                idVenta,
+                idSucursal,
+                "sp_ObtenerDetalleVenta_CargoUsuario_X_ID"
+        );
+        return enrichRowsConTipoMaterial(rows, idVenta, idSucursal);
+    }
+
+    public List<Map<String, Object>> obtenerEstadoCierrePorIdVenta(Long idVenta, Integer idSucursal) {
         return template(idSucursal).queryForList(
-                "EXEC sp_ObtenerDetalleVenta_CargoUsuario_X_ID ?",
+                "SELECT TOP (1) " +
+                        "v.Id_Estado AS IdEstadoCierre, " +
+                        "e.Nombre AS EstadoCierre " +
+                        "FROM dbo.tbl_Venta v " +
+                        "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
+                        "WHERE v.Id_Venta = ? AND ISNULL(v.E_Eliminado, 0) = 0",
                 idVenta
         );
+    }
+
+    public List<Integer> obtenerIdsVendedorPorIdUsuario(Integer idUsuario, Integer idSucursal) {
+        if (idUsuario == null || idUsuario <= 0) {
+            return Collections.emptyList();
+        }
+
+        JdbcTemplate target = template(idSucursal);
+
+        String[] directVendorStatements = new String[] {};
+        for (String sql : directVendorStatements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
+                if (rows == null || rows.isEmpty()) continue;
+                LinkedHashSet<Integer> out = new LinkedHashSet<>();
+                for (Map<String, Object> row : rows) {
+                    Object value = row.get("id_vendedor");
+                    if (value == null) value = row.get("Id_Vendedor");
+                    if (value == null) value = row.get("idvendedor");
+                    Integer parsed = parsePositiveInteger(value);
+                    if (parsed != null) out.add(parsed);
+                }
+                if (!out.isEmpty()) return new ArrayList<>(out);
+            } catch (DataAccessException ex) {
+                // Continuar con siguiente variante.
+            }
+        }
+
+        String[] statements = new String[] {
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_usuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idusuario = ?",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_usuario = ?",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idusuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.id_tecnico = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuariotecnico ut " +
+                        "WHERE ut.idtecnico = ?",
+                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.Id_Usuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.IdUsuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.Id_Tecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.IdTecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.id_usuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.idusuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.id_tecnico = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ut.idtecnico = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_usuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idusuario = ?",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_usuario = ?",
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idusuario = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.id_tecnico = ?",
+                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_usuaritecnico ut " +
+                        "WHERE ut.idtecnico = ?"
+        };
+
+        RuntimeException lastError = null;
+        for (String sql : statements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
+                if (rows == null || rows.isEmpty()) {
+                    continue;
+                }
+                LinkedHashSet<Integer> out = new LinkedHashSet<>();
+                for (Map<String, Object> row : rows) {
+                    Object value = row.get("id_vendedor");
+                    if (value == null) {
+                        value = row.get("Id_Vendedor");
+                    }
+                    if (value == null) {
+                        value = row.get("idvendedor");
+                    }
+                    if (value == null) {
+                        continue;
+                    }
+                    Integer parsed = parsePositiveInteger(value);
+                    if (parsed != null) out.add(parsed);
+                }
+                if (!out.isEmpty()) return new ArrayList<>(out);
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+
+        if (lastError != null) {
+            logger.warn(
+                    "No se pudo resolver mapeo idUsuario->idVendedor para idUsuario={}, idSucursal={}. " +
+                            "Se usara fallback con idUsuario como vendedor. Causa: {}",
+                    idUsuario,
+                    idSucursal,
+                    lastError.getMessage()
+            );
+        }
+        return Collections.emptyList();
+    }
+
+    private Integer parsePositiveInteger(Object value) {
+        if (value == null) return null;
+        try {
+            Integer parsed = value instanceof Number
+                    ? ((Number) value).intValue()
+                    : Integer.parseInt(String.valueOf(value).trim());
+            return parsed != null && parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     public Map<String, Object> obtenerOrdenTrabajoPorNumeroUnica(String numeroOrden, Integer idSucursal) {
@@ -112,13 +435,40 @@ public class OtRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    public List<Map<String, Object>> obtenerCargoUsuarioExistente(String serie, String chipId) {
+    public Map<String, Object> obtenerUltimaVentaPorOrdenYCliente(Integer ordenTrabajo, Integer codigoCliente, Integer idSucursal) {
+        if (ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT TOP (1) " +
+                            "v.Id_Venta AS idVenta, " +
+                            "v.OrdenTrabajo AS ordenTrabajo, " +
+                            "v.CodigoCliente AS codigoCliente, " +
+                            "v.Origen AS origen, " +
+                            "v.Id_Estado AS idEstado, " +
+                            "v.Fecha_Ejecucion AS fechaEjecucion " +
+                            "FROM dbo.tbl_Venta v " +
+                            "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                            "AND v.OrdenTrabajo = ? " +
+                            "AND v.CodigoCliente = ? " +
+                            "ORDER BY v.Id_Venta DESC",
+                    ordenTrabajo,
+                    codigoCliente
+            );
+            return rows == null || rows.isEmpty() ? null : rows.get(0);
+        } catch (DataAccessException ex) {
+            return null;
+        }
+    }
+
+    public List<Map<String, Object>> obtenerCargoUsuarioExistente(String serie, String chipId, Integer idSucursal) {
         boolean serieVacia = serie == null || serie.trim().isEmpty();
         boolean chipVacio = chipId == null || chipId.trim().isEmpty();
         if (serieVacia && chipVacio) {
             return java.util.Collections.emptyList();
         }
-        return jdbcTemplate.queryForList(
+        return template(idSucursal).queryForList(
                 "SELECT TOP 1 Id FROM dbo.tbl_CodigoVentaCargoUsuario " +
                         "WHERE E_Eliminado = 0 AND ((? <> '' AND Serial = ?) OR (? <> '' AND ChipId = ?))",
                 serie == null ? "" : serie,
@@ -179,6 +529,43 @@ public class OtRepository {
                 "EXEC spx_ValidaMovimientos ?",
                 sqlDate(fecha)
         );
+    }
+
+    public boolean existeConformacionCuadrillaTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
+        if (fecha == null || idUsuario == null || idUsuario <= 0) {
+            return false;
+        }
+        String[] sqlCandidates = new String[] {
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND ISNULL(eEliminado, 0) = 0 " +
+                        "  AND id_tecnico = ?",
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND id_tecnico = ?",
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND id_tecnico = ?"
+        };
+        for (String sql : sqlCandidates) {
+            try {
+                List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                        sql,
+                        sqlDate(fecha),
+                        idUsuario
+                );
+                if (rows != null && !rows.isEmpty()) {
+                    return true;
+                }
+            } catch (DataAccessException ignored) {
+                // Intentar siguiente variante de esquema.
+            }
+        }
+        return false;
     }
 
     public List<Map<String, Object>> validarEstadoSerie(
@@ -493,6 +880,62 @@ public class OtRepository {
         );
     }
 
+    public int contarDetallesPorIdVenta(Long idVenta, Integer idSucursal) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        JdbcTemplate target = template(idSucursal);
+        String[] statements = new String[] {
+                "SELECT " +
+                        "(SELECT COUNT(1) FROM dbo.tbl_CodigoVenta cv WHERE cv.Id_Venta = ? AND ISNULL(cv.E_Eliminado, 0) = 0) + " +
+                        "(SELECT COUNT(1) FROM dbo.tbl_CodigoVentaCargoUsuario cu WHERE cu.Id_Venta = ? AND ISNULL(cu.E_Eliminado, 0) = 0) AS total",
+                "SELECT " +
+                        "(SELECT COUNT(1) FROM dbo.tbl_codigoventa cv WHERE cv.id_venta = ? AND ISNULL(cv.e_eliminado, 0) = 0) + " +
+                        "(SELECT COUNT(1) FROM dbo.tbl_codigoventacargousuario cu WHERE cu.id_venta = ? AND ISNULL(cu.e_eliminado, 0) = 0) AS total",
+                "SELECT COUNT(1) AS total FROM dbo.tbl_CodigoVenta cv WHERE cv.Id_Venta = ? AND ISNULL(cv.E_Eliminado, 0) = 0",
+                "SELECT COUNT(1) AS total FROM dbo.tbl_codigoventa cv WHERE cv.id_venta = ? AND ISNULL(cv.e_eliminado, 0) = 0"
+        };
+
+        for (String sql : statements) {
+            try {
+                Integer total;
+                if (sql.contains("tbl_CodigoVentaCargoUsuario") || sql.contains("tbl_codigoventacargousuario")) {
+                    total = target.queryForObject(sql, Integer.class, idVenta, idVenta);
+                } else {
+                    total = target.queryForObject(sql, Integer.class, idVenta);
+                }
+                if (total != null && total >= 0) {
+                    return total;
+                }
+            } catch (DataAccessException ex) {
+                // Intentar siguiente variante.
+            }
+        }
+        return 0;
+    }
+
+    public int promoverOrigenManualAOtWeb(
+            LocalDate fechaEjecucion,
+            Integer ordenTrabajo,
+            Integer codigoCliente,
+            Integer idSucursal) {
+        if (fechaEjecucion == null || ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
+            return 0;
+        }
+        return template(idSucursal).update(
+                "UPDATE dbo.tbl_Venta " +
+                        "SET Origen = 'OT_WEB' " +
+                        "WHERE CONVERT(DATE, Fecha_Ejecucion) = ? " +
+                        "AND OrdenTrabajo = ? " +
+                        "AND CodigoCliente = ? " +
+                        "AND ISNULL(E_Eliminado, 0) = 0 " +
+                        "AND UPPER(LTRIM(RTRIM(ISNULL(Origen, '')))) = 'MANUAL'",
+                sqlDate(fechaEjecucion),
+                ordenTrabajo,
+                codigoCliente
+        );
+    }
+
     public Map<String, Object> registrarOt(
             Integer idUsuario,
             Integer idRuta,
@@ -561,6 +1004,91 @@ public class OtRepository {
         );
     }
 
+    public int actualizarRutaPdfVenta(Long idVenta, String rutaPdf, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0 || rutaPdf == null || rutaPdf.trim().isEmpty()) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET RutaPdf = ? WHERE Id_Venta = ?",
+                rutaPdf.trim(),
+                idVenta
+        );
+    }
+
+    public int actualizarDatosNodoRamalTapBocaVenta(
+            Long idVenta,
+            String nodo,
+            String ramal,
+            Integer tap,
+            String nodoRamalTap,
+            Integer boca,
+            Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta " +
+                        "SET Nodo = ?, Ramal = ?, Tap = ?, Nodo_Ramal_Tap = ?, Boca = ? " +
+                        "WHERE Id_Venta = ?",
+                nodo,
+                ramal,
+                tap,
+                nodoRamalTap,
+                boca,
+                idVenta
+        );
+    }
+
+    public int actualizarTipoTecnologiaVenta(Long idVenta, String tipoTecnologia, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0 || tipoTecnologia == null || tipoTecnologia.trim().isEmpty()) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET TipoTecnologia = ? WHERE Id_Venta = ?",
+                tipoTecnologia.trim(),
+                idVenta
+        );
+    }
+
+    public int actualizarChecksVenta(Long idVenta, Boolean checkPlantaExterna, Boolean tieneDetalle, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        boolean checkPlantaExternaValue = Boolean.TRUE.equals(checkPlantaExterna);
+        boolean tieneDetalleValue = Boolean.TRUE.equals(tieneDetalle);
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET CheckPlantaExterna = ?, TieneDetalle = ? WHERE Id_Venta = ?",
+                checkPlantaExternaValue,
+                tieneDetalleValue,
+                idVenta
+        );
+    }
+
+    public int actualizarFechaHoraDetalleVenta(Long idVenta, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        JdbcTemplate target = template(idSucursalSesion);
+        String[] statements = new String[] {
+                "UPDATE dbo.tbl_Venta SET FechaHoraDetalle = GETDATE() WHERE Id_Venta = ?",
+                "UPDATE dbo.tbl_venta SET FechaHoraDetalle = GETDATE() WHERE id_venta = ?",
+                "UPDATE dbo.tbl_Venta SET Fecha_Hora_Detalle = GETDATE() WHERE Id_Venta = ?",
+                "UPDATE dbo.tbl_venta SET fecha_hora_detalle = GETDATE() WHERE id_venta = ?"
+        };
+        DataAccessException lastError = null;
+        for (String sql : statements) {
+            try {
+                return target.update(sql, idVenta);
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+        if (lastError != null) {
+            throw lastError;
+        }
+        return 0;
+    }
+
     private JdbcTemplate template(Integer idSucursal) {
         return dbSupport.resolveTemplate(idSucursal, jdbcTemplate);
     }
@@ -578,5 +1106,260 @@ public class OtRepository {
             return "";
         }
         return value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Ejecuta una lista de SP alternativos para detalle por Id_Venta.
+     */
+    private List<Map<String, Object>> queryForListByIdVentaConSpAlternativos(
+            Long idVenta,
+            Integer idSucursal,
+            String... storedProcedures) {
+        if (idVenta == null || idVenta <= 0) {
+            return java.util.Collections.emptyList();
+        }
+        JdbcTemplate target = template(idSucursal);
+        RuntimeException lastError = null;
+
+        for (String storedProcedure : storedProcedures) {
+            if (storedProcedure == null || storedProcedure.trim().isEmpty()) {
+                continue;
+            }
+            try {
+                return target.queryForList("EXEC dbo." + storedProcedure + " ?", idVenta);
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+
+        if (lastError != null) {
+            throw lastError;
+        }
+        return java.util.Collections.emptyList();
+    }
+
+    private List<Map<String, Object>> enrichRowsConTipoMaterial(List<Map<String, Object>> rows, Long idVenta, Integer idSucursal) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+
+        final Map<Integer, String> tipoMaterialById = loadTipoMaterialMap(idSucursal);
+        final Map<String, String> tipoMaterialByDetalle = loadTipoMaterialByDetalleCodigoVenta(idVenta, idSucursal);
+        final Map<Integer, String> tipoMaterialByProducto = loadTipoMaterialByProductoMap(idSucursal);
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+
+        for (Map<String, Object> source : rows) {
+            Map<String, Object> row = new LinkedHashMap<>(source);
+            Integer idTipoMaterial = firstPositiveInteger(row,
+                    "Id_TipoMaterial",
+                    "id_tipo_material",
+                    "idtipomaterial",
+                    "IdTipoMaterial",
+                    "idTipoMaterial",
+                    "tipoMaterial",
+                    "TipoMaterial"
+            );
+            Integer idProducto = firstPositiveInteger(row,
+                    "Id_Producto",
+                    "id_producto",
+                    "idproducto",
+                    "IdProducto",
+                    "idProducto"
+            );
+            String detalleKey = buildDetalleMaterialKey(row);
+
+            String nombre = null;
+            if (idTipoMaterial != null && idTipoMaterial > 0) {
+                nombre = tipoMaterialById.get(idTipoMaterial);
+            }
+            if ((nombre == null || nombre.trim().isEmpty()) && detalleKey != null && !detalleKey.isEmpty()) {
+                nombre = tipoMaterialByDetalle.get(detalleKey);
+            }
+            if ((nombre == null || nombre.trim().isEmpty()) && idProducto != null && idProducto > 0) {
+                nombre = tipoMaterialByProducto.get(idProducto);
+            }
+
+            if (nombre != null && !nombre.trim().isEmpty()) {
+                row.put("TipoMaterial", nombre.trim());
+            } else if (idTipoMaterial != null && idTipoMaterial > 0) {
+                row.put("TipoMaterial", "ID " + idTipoMaterial);
+            }
+
+            out.add(row);
+        }
+
+        return out;
+    }
+
+    private String buildDetalleMaterialKey(Map<String, Object> row) {
+        Integer idProducto = firstPositiveInteger(row,
+                "Id_Producto",
+                "id_producto",
+                "idproducto",
+                "IdProducto",
+                "idProducto"
+        );
+        if (idProducto == null || idProducto <= 0) {
+            return "";
+        }
+
+        String codInicio = normalizeText(firstStringIgnoreCase(row,
+                "Cod_Inicio",
+                "cod_inicio",
+                "CodInicio",
+                "codInicio",
+                "Serial",
+                "serial"
+        ));
+        String chipId = normalizeText(firstStringIgnoreCase(row,
+                "ChipID",
+                "chipid",
+                "ChipId",
+                "chipId"
+        ));
+        String cantidad = normalizeDecimalLike(firstStringIgnoreCase(row, "Cantidad", "cantidad"));
+        return idProducto + "|" + codInicio + "|" + chipId + "|" + cantidad;
+    }
+
+    private String normalizeDecimalLike(String value) {
+        if (value == null) return "";
+        String source = value.trim();
+        if (source.isEmpty()) return "";
+        try {
+            return new BigDecimal(source).stripTrailingZeros().toPlainString();
+        } catch (NumberFormatException ex) {
+            return source;
+        }
+    }
+
+    private String firstStringIgnoreCase(Map<String, Object> row, String... keys) {
+        if (row == null || row.isEmpty() || keys == null) {
+            return "";
+        }
+        for (String key : keys) {
+            if (key == null || key.trim().isEmpty()) continue;
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                if (entry.getKey() == null) continue;
+                if (entry.getKey().equalsIgnoreCase(key)) {
+                    Object value = entry.getValue();
+                    return value == null ? "" : String.valueOf(value);
+                }
+            }
+        }
+        return "";
+    }
+
+    private Integer firstPositiveInteger(Map<String, Object> row, String... keys) {
+        if (row == null || row.isEmpty() || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            if (key == null || key.trim().isEmpty()) {
+                continue;
+            }
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                if (entry.getKey() == null) {
+                    continue;
+                }
+                if (entry.getKey().equalsIgnoreCase(key)) {
+                    Integer parsed = parsePositiveInteger(entry.getValue());
+                    if (parsed != null && parsed > 0) {
+                        return parsed;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private Map<Integer, String> loadTipoMaterialMap(Integer idSucursal) {
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT CAST(Id_TipoMaterial AS INT) AS idTipoMaterial, " +
+                            "LTRIM(RTRIM(ISNULL(Nombre, ''))) AS nombre " +
+                            "FROM dbo.tbl_tipomaterial " +
+                            "WHERE ISNULL(E_Eliminado, 0) = 0"
+            );
+            Map<Integer, String> out = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                Integer id = firstPositiveInteger(row, "idTipoMaterial", "Id_TipoMaterial", "id_tipo_material");
+                if (id == null || id <= 0) {
+                    continue;
+                }
+                Object nombreRaw = row.get("nombre");
+                String nombre = nombreRaw == null ? "" : String.valueOf(nombreRaw).trim();
+                if (!nombre.isEmpty()) {
+                    out.put(id, nombre);
+                }
+            }
+            return out;
+        } catch (DataAccessException ex) {
+            return Collections.emptyMap();
+        }
+    }
+
+    private Map<Integer, String> loadTipoMaterialByProductoMap(Integer idSucursal) {
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT CAST(p.Id_Producto AS INT) AS idProducto, " +
+                            "LTRIM(RTRIM(ISNULL(p.TipoMaterial, ''))) AS tipoMaterial " +
+                            "FROM dbo.tbl_producto p " +
+                            "WHERE ISNULL(p.E_Eliminado, 0) = 0"
+            );
+            Map<Integer, String> out = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                Integer idProducto = firstPositiveInteger(row, "idProducto", "Id_Producto", "id_producto");
+                if (idProducto == null || idProducto <= 0) {
+                    continue;
+                }
+                Object tipoMaterialRaw = row.get("tipoMaterial");
+                String tipoMaterial = tipoMaterialRaw == null ? "" : String.valueOf(tipoMaterialRaw).trim();
+                if (!tipoMaterial.isEmpty()) {
+                    out.put(idProducto, tipoMaterial);
+                }
+            }
+            return out;
+        } catch (DataAccessException ex) {
+            return Collections.emptyMap();
+        }
+    }
+
+    private Map<String, String> loadTipoMaterialByDetalleCodigoVenta(Long idVenta, Integer idSucursal) {
+        if (idVenta == null || idVenta <= 0) {
+            return Collections.emptyMap();
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT " +
+                            "CAST(cv.Id_Producto AS INT) AS idProducto, " +
+                            "LTRIM(RTRIM(ISNULL(cv.Cod_Inicio, ''))) AS codInicio, " +
+                            "LTRIM(RTRIM(ISNULL(cv.ChipID, ''))) AS chipId, " +
+                            "CAST(ISNULL(cv.Cantidad, 0) AS DECIMAL(18,4)) AS cantidad, " +
+                            "LTRIM(RTRIM(ISNULL(tm.Nombre, ''))) AS tipoMaterial " +
+                            "FROM dbo.tbl_codigoventa cv " +
+                            "LEFT JOIN dbo.tbl_tipomaterial tm " +
+                            "ON tm.Id_TipoMaterial = cv.Id_TipoMaterial " +
+                            "AND ISNULL(tm.E_Eliminado, 0) = 0 " +
+                            "WHERE cv.Id_Venta = ? " +
+                            "AND ISNULL(cv.E_Eliminado, 0) = 0",
+                    idVenta
+            );
+            Map<String, String> out = new LinkedHashMap<>();
+            for (Map<String, Object> row : rows) {
+                Integer idProducto = firstPositiveInteger(row, "idProducto", "Id_Producto", "id_producto");
+                if (idProducto == null || idProducto <= 0) continue;
+                String codInicio = normalizeText(firstStringIgnoreCase(row, "codInicio", "Cod_Inicio", "cod_inicio"));
+                String chipId = normalizeText(firstStringIgnoreCase(row, "chipId", "ChipID", "chipid"));
+                String cantidad = normalizeDecimalLike(firstStringIgnoreCase(row, "cantidad", "Cantidad"));
+                String key = idProducto + "|" + codInicio + "|" + chipId + "|" + cantidad;
+                String tipoMaterial = firstStringIgnoreCase(row, "tipoMaterial", "TipoMaterial", "Nombre", "nombre").trim();
+                if (!tipoMaterial.isEmpty() && !out.containsKey(key)) {
+                    out.put(key, tipoMaterial);
+                }
+            }
+            return out;
+        } catch (DataAccessException ex) {
+            return Collections.emptyMap();
+        }
     }
 }

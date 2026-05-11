@@ -90,4 +90,51 @@ public class SupervisionController {
                 "Listado de tipos de penalizacion."
         ));
     }
+
+    @GetMapping("/catalogos/tecnicos")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarTecnicosSupervisor(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarTecnicosSupervisor(token),
+                "Listado de tecnicos asociados al supervisor."
+        ));
+    }
+
+    @GetMapping("/jornadas/pendientes")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarJornadasPendientes(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarIniciosPendientes(token),
+                "Listado de inicios de jornada pendientes de aprobacion."
+        ));
+    }
+
+    @GetMapping("/jornadas/confirmadas-hoy")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarJornadasConfirmadasHoy(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarIniciosConfirmadosHoy(token),
+                "Listado de inicios de jornada confirmados hoy."
+        ));
+    }
+
+    @PostMapping("/jornadas/{idInicio}/aprobar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> aprobarJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.aprobarInicioPendiente(idInicio, token),
+                "Inicio de jornada aprobado."
+        ));
+    }
+
+    @PostMapping("/jornadas/{idInicio}/rechazar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> rechazarJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.rechazarInicioPendiente(idInicio, token),
+                "Inicio de jornada rechazado."
+        ));
+    }
 }

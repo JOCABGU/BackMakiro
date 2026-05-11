@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 
 @Service
@@ -33,8 +35,14 @@ public class CentralGruposService {
 
     public List<Map<String, Object>> listarGrupos(String token, String sucursal) {
         AuthLoginResponse usuario = requireCentral(token);
-        JdbcTemplate template = resolveTemplate(sucursal, usuario);
-        return repository.listarGrupos(template, usuario.getIdUsuario());
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
+        if (isBlank(sucursalResuelta)) {
+            return new ArrayList<>();
+        }
+        return repository.listarGruposDesdeConformacionCentral(
+                dbConnectionManager.connDb("central"),
+                sucursalResuelta
+        );
     }
 
     public List<Map<String, Object>> listarSupervisoresFiltro(String token, String sucursal) {
@@ -66,11 +74,29 @@ public class CentralGruposService {
             Integer idUsuarioSupervisor) {
         AuthLoginResponse usuario = requireCentral(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
         List<Map<String, Object>> rows = repository.asignarSupervisor(template, usuario.getIdUsuario(), idGrupo, idUsuarioSupervisor);
         if (rows == null || rows.isEmpty()) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "NO_DATA", "No se pudo asignar supervisor al grupo.");
         }
-        return rows.get(0);
+        // Refleja el cambio en la fuente usada por el listado (conformacion diaria).
+        List<Map<String, Object>> supervisores = repository.listarSupervisoresFiltro(template);
+        String nombreSupervisor = findNombreSupervisor(supervisores, idUsuarioSupervisor);
+        List<Map<String, Object>> gruposRows = repository.listarGrupos(template, usuario.getIdUsuario());
+        String nombreGrupo = findNombreGrupo(gruposRows, idGrupo);
+        int actualizados = repository.actualizarSupervisorEnConformacionCentral(
+                dbConnectionManager.connDb("central"),
+                sucursalResuelta,
+                nombreGrupo,
+                idUsuarioSupervisor,
+                nombreSupervisor
+        );
+
+        Map<String, Object> out = new HashMap<>(rows.get(0));
+        out.put("actualizadosConformacion", actualizados);
+        out.put("idGrupo", idGrupo);
+        out.put("idSupervisor", idUsuarioSupervisor);
+        return out;
     }
 
     public Map<String, Object> asignarTecnico(
@@ -153,6 +179,136 @@ public class CentralGruposService {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "NO_DATA", "No se pudo cambiar colaborador temporal.");
         }
         return rows.get(0);
+    }
+
+    public Map<String, Object> cambiarSupervisorMasivo(
+            String token,
+            String sucursal,
+            Integer idSupervisorOrigen,
+            Integer idSupervisorDestino,
+            List<Integer> idGrupos) {
+        AuthLoginResponse usuario = requireCentral(token);
+        JdbcTemplate template = resolveTemplate(sucursal, usuario);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
+
+        if (idSupervisorOrigen == null || idSupervisorOrigen <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Supervisor origen es requerido.");
+        }
+        if (idSupervisorDestino == null || idSupervisorDestino <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Supervisor destino es requerido.");
+        }
+        if (idSupervisorOrigen.equals(idSupervisorDestino)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Supervisor origen y destino deben ser diferentes.");
+        }
+        List<Map<String, Object>> supervisores = repository.listarSupervisoresFiltro(template);
+        String nombreOrigen = findNombreSupervisor(supervisores, idSupervisorOrigen);
+        String nombreDestino = findNombreSupervisor(supervisores, idSupervisorDestino);
+        if (isBlank(nombreOrigen) || isBlank(nombreDestino)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "No se pudo resolver supervisor origen/destino.");
+        }
+
+        List<Map<String, Object>> gruposRows = repository.listarGrupos(template, usuario.getIdUsuario());
+        List<Map<String, Object>> gruposObjetivo = resolverGruposObjetivoPorNombre(gruposRows, nombreOrigen, idGrupos);
+        if (gruposObjetivo.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "No hay grupos para transferir.");
+        }
+
+        int actualizados = 0;
+        List<Integer> aplicados = new ArrayList<>();
+        for (Map<String, Object> row : gruposObjetivo) {
+            Integer idGrupo = toInteger(row.get("id_grupo"));
+            String nombreGrupo = toText(row.get("nombre"));
+            int affected = repository.actualizarSupervisorEnConformacionCentral(
+                    dbConnectionManager.connDb("central"),
+                    sucursalResuelta,
+                    nombreGrupo,
+                    idSupervisorDestino,
+                    nombreDestino
+            );
+            if (affected > 0) {
+                actualizados += affected;
+                if (idGrupo != null) {
+                    aplicados.add(idGrupo);
+                }
+            }
+        }
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("actualizados", actualizados);
+        out.put("idSupervisorOrigen", idSupervisorOrigen);
+        out.put("idSupervisorDestino", idSupervisorDestino);
+        out.put("idGruposAplicados", aplicados);
+        return out;
+    }
+
+    private List<Map<String, Object>> resolverGruposObjetivoPorNombre(
+            List<Map<String, Object>> gruposRows,
+            String supervisorOrigen,
+            List<Integer> idGruposSolicitados) {
+        String origenNorm = normalize(supervisorOrigen);
+        List<Map<String, Object>> origen = new ArrayList<>();
+        for (Map<String, Object> row : gruposRows) {
+            String supervisor = toText(firstNonNull(row, "supervisor", "supervisor_a_cargo", "supervisorACargo"));
+            if (normalize(supervisor).equals(origenNorm)) {
+                origen.add(row);
+            }
+        }
+        if (idGruposSolicitados == null || idGruposSolicitados.isEmpty()) {
+            return origen;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : origen) {
+            Integer id = toInteger(row.get("id_grupo"));
+            if (id != null && idGruposSolicitados.contains(id)) {
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private Object firstNonNull(Map<String, Object> row, String... keys) {
+        for (String key : keys) {
+            if (row.containsKey(key) && row.get(key) != null) {
+                return row.get(key);
+            }
+        }
+        return null;
+    }
+
+    private String toText(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String findNombreSupervisor(List<Map<String, Object>> supervisores, Integer idSupervisor) {
+        if (idSupervisor == null) return "";
+        for (Map<String, Object> row : supervisores) {
+            Integer id = toInteger(firstNonNull(row, "idUsuarioSupervisor", "id_usuario_supervisor", "id_usuario", "id"));
+            if (id != null && id.equals(idSupervisor)) {
+                return toText(firstNonNull(row, "supervisorACargo", "supervisor", "nombre"));
+            }
+        }
+        return "";
+    }
+
+    private String findNombreGrupo(List<Map<String, Object>> grupos, Integer idGrupo) {
+        if (idGrupo == null) return "";
+        for (Map<String, Object> row : grupos) {
+            Integer id = toInteger(firstNonNull(row, "id_grupo", "idGrupo"));
+            if (id != null && id.equals(idGrupo)) {
+                return toText(firstNonNull(row, "nombre", "grupo"));
+            }
+        }
+        return "";
     }
 
     private AuthLoginResponse requireCentral(String token) {

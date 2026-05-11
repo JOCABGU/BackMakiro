@@ -20,6 +20,13 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('dbo.tbl_LlamadaAtencion', 'Testigo') IS NULL
+BEGIN
+    ALTER TABLE dbo.tbl_LlamadaAtencion
+    ADD Testigo VARCHAR(200) NULL;
+END
+GO
+
 IF EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -63,6 +70,7 @@ BEGIN
         la.Descripcion AS descripcion,
         la.ComentarioColaborador AS comentarioColaborador,
         la.Acuerdos AS acuerdos,
+        la.Testigo AS testigo,
         la.FechaSeguimiento AS fechaSeguimiento,
         la.FirmaTecnico AS firmaTecnico,
         la.FirmaTestigo AS firmaTestigo
@@ -78,7 +86,7 @@ GO
 
 IF OBJECT_ID('dbo.spx_RegistrarLlamadaAtencion', 'P') IS NULL
 BEGIN
-    EXEC('CREATE PROC dbo.spx_RegistrarLlamadaAtencion @IdTecnico NVARCHAR(16), @CodEmpleado NVARCHAR(30), @IdUsuarioSupervisor INT, @IdTipoComunicacion NVARCHAR(16), @Motivo NVARCHAR(500), @Descripcion NVARCHAR(500)=NULL, @ComentarioColaborador NVARCHAR(500)=NULL, @Acuerdos NVARCHAR(500)=NULL, @FechaSeguimiento DATETIME=NULL, @FirmaTecnico NVARCHAR(500)=NULL, @FirmaTestigo NVARCHAR(500)=NULL AS BEGIN SET NOCOUNT ON; SELECT 1 AS placeholder; END');
+    EXEC('CREATE PROC dbo.spx_RegistrarLlamadaAtencion @IdTecnico NVARCHAR(16), @CodEmpleado NVARCHAR(30), @IdUsuarioSupervisor INT, @IdTipoComunicacion NVARCHAR(16), @Motivo NVARCHAR(500), @Descripcion NVARCHAR(500)=NULL, @ComentarioColaborador NVARCHAR(500)=NULL, @Acuerdos NVARCHAR(500)=NULL, @Testigo VARCHAR(200)=NULL, @FechaSeguimiento DATETIME=NULL, @FirmaTecnico NVARCHAR(500)=NULL, @FirmaTestigo NVARCHAR(500)=NULL AS BEGIN SET NOCOUNT ON; SELECT 1 AS placeholder; END');
 END
 GO
 
@@ -91,6 +99,7 @@ ALTER PROC dbo.spx_RegistrarLlamadaAtencion
     @Descripcion NVARCHAR(500) = NULL,
     @ComentarioColaborador NVARCHAR(500) = NULL,
     @Acuerdos NVARCHAR(500) = NULL,
+    @Testigo VARCHAR(200) = NULL,
     @FechaSeguimiento DATETIME = NULL,
     @FirmaTecnico NVARCHAR(500) = NULL,
     @FirmaTestigo NVARCHAR(500) = NULL
@@ -102,6 +111,7 @@ BEGIN
     DECLARE @CodEmpleadoNorm NVARCHAR(30) = NULLIF(LTRIM(RTRIM(@CodEmpleado)), '');
     DECLARE @IdTipoNorm NVARCHAR(16) = NULLIF(LTRIM(RTRIM(@IdTipoComunicacion)), '');
     DECLARE @MotivoNorm NVARCHAR(500) = NULLIF(LTRIM(RTRIM(@Motivo)), '');
+    DECLARE @TestigoNorm VARCHAR(200) = NULLIF(LTRIM(RTRIM(@Testigo)), '');
 
     IF @IdTecnicoNorm IS NULL
     BEGIN
@@ -130,6 +140,12 @@ BEGIN
     IF @IdUsuarioSupervisor IS NULL
     BEGIN
         RAISERROR('IdUsuarioSupervisor es requerido.', 16, 1);
+        RETURN;
+    END
+
+    IF @TestigoNorm IS NULL
+    BEGIN
+        RAISERROR('Testigo es requerido.', 16, 1);
         RETURN;
     END
 
@@ -168,6 +184,7 @@ BEGIN
         Descripcion,
         ComentarioColaborador,
         Acuerdos,
+        Testigo,
         FechaSeguimiento,
         FirmaTecnico,
         FirmaTestigo
@@ -183,6 +200,7 @@ BEGIN
         NULLIF(LTRIM(RTRIM(@Descripcion)), ''),
         NULLIF(LTRIM(RTRIM(@ComentarioColaborador)), ''),
         NULLIF(LTRIM(RTRIM(@Acuerdos)), ''),
+        @TestigoNorm,
         @FechaSeguimiento,
         NULLIF(LTRIM(RTRIM(@FirmaTecnico)), ''),
         NULLIF(LTRIM(RTRIM(@FirmaTestigo)), '')

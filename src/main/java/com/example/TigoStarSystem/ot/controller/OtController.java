@@ -19,10 +19,12 @@ import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
 import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
 import com.example.TigoStarSystem.ot.service.OtService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.Valid;
 import javax.validation.constraints.NotBlank;
@@ -50,17 +52,33 @@ public class OtController {
         return ResponseEntity.ok(ApiResponse.of(filas, "OT actualizada como realizada."));
     }
 
-    @PostMapping({"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"})
+    @PostMapping(
+            value = {"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"},
+            consumes = MediaType.APPLICATION_JSON_VALUE
+    )
     public ResponseEntity<ApiResponse<OtRegistrarVentaResponse>> registrarVentaParaRegistroOtWb(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @Valid @RequestBody OtRegistrarVentaRequest request) {
         OtRegistrarVentaResponse response = otService.registrarVentaParaRegistroOtWb(request, resolveIdSucursal(token));
-        return ResponseEntity.ok(ApiResponse.of(response, "Venta registrada correctamente."));
+        return ResponseEntity.ok(ApiResponse.of(response, "Registro exitoso."));
+    }
+
+    @PostMapping(
+            value = {"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"},
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ResponseEntity<ApiResponse<OtRegistrarVentaResponse>> registrarVentaParaRegistroOtWbMultipart(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @Valid @RequestPart("payload") OtRegistrarVentaRequest request,
+            @RequestPart("pdf") MultipartFile pdf) {
+        OtRegistrarVentaResponse response = otService.registrarVentaParaRegistroOtWb(request, resolveIdSucursal(token), pdf);
+        return ResponseEntity.ok(ApiResponse.of(response, "Registro exitoso."));
     }
 
     @PostMapping("/detalle-materiales")
     public ResponseEntity<ApiResponse<OtRegistrarDetalleAgendaResponse>> registrarDetalleMateriales(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestBody OtRegistrarDetalleAgendaRequest request) {
         OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, resolveIdSucursal(token));
         return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
@@ -69,6 +87,7 @@ public class OtController {
     @PostMapping("/cargo-usuario")
     public ResponseEntity<ApiResponse<Map<String, Object>>> registrarCargoUsuario(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestBody OtRegistrarCargoUsuarioRequest request) {
         int filas = otService.registrarCargoUsuario(request, resolveIdSucursal(token));
         Map<String, Object> response = new java.util.LinkedHashMap<>();
@@ -109,24 +128,39 @@ public class OtController {
             @RequestParam(value = "usuario", required = false) Integer idUsuario,
             @RequestParam(value = "rol", required = false) String rol,
             @RequestParam(value = "pendiente", required = false) Boolean pendiente) {
-        Integer idSucursal = resolveIdSucursal(token);
+        AuthMeResponse me = resolveSession(token);
+        Integer idSucursal = extractIdSucursal(me);
+
+        Integer idUsuarioFiltro = idUsuario;
+        String rolFiltro = rol;
+        if (me != null && me.getUsuario() != null) {
+            String rolSesion = me.getUsuario().getRol();
+            if (rolSesion != null && rolSesion.trim().equalsIgnoreCase("tecnico")) {
+                idUsuarioFiltro = me.getUsuario().getIdUsuario();
+                rolFiltro = rolSesion;
+            }
+        }
 
         if (fecha != null) {
             return ResponseEntity.ok(ApiResponse.of(
                     otService.filtrarListado(
                             otService.listarPorFecha(fecha, idSucursal),
-                            idUsuario,
-                            rol,
-                            pendiente),
+                            idUsuarioFiltro,
+                            rolFiltro,
+                            pendiente,
+                            me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null,
+                            idSucursal),
                     "Listado de OT por fecha."));
         }
         if (inicio != null && fin != null) {
             return ResponseEntity.ok(ApiResponse.of(
                     otService.filtrarListado(
                             otService.listarPorRango(inicio, fin, idSucursal),
-                            idUsuario,
-                            rol,
-                            pendiente),
+                            idUsuarioFiltro,
+                            rolFiltro,
+                            pendiente,
+                            me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null,
+                            idSucursal),
                     "Listado de OT por rango."));
         }
         if (inicio == null && fin == null) {
@@ -134,9 +168,11 @@ public class OtController {
             return ResponseEntity.ok(ApiResponse.of(
                     otService.filtrarListado(
                             otService.listarPorFecha(hoy, idSucursal),
-                            idUsuario,
-                            rol,
-                            pendiente),
+                            idUsuarioFiltro,
+                            rolFiltro,
+                            pendiente,
+                            me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null,
+                            idSucursal),
                     "Listado de OT del dia."));
         }
         throw new ApiException(
@@ -144,6 +180,26 @@ public class OtController {
                 "VALIDATION_ERROR",
                 "Debe enviar 'fecha' o ambos 'inicio' y 'fin'."
         );
+    }
+
+    @GetMapping("/finalizadas")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarOtFinalizadas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "usuario", required = false) Integer idUsuario) {
+        AuthMeResponse me = resolveSession(token);
+        Integer idSucursal = extractIdSucursal(me);
+        Integer idUsuarioFiltro = idUsuario;
+        if (me != null && me.getUsuario() != null && me.getUsuario().getIdUsuario() != null) {
+            idUsuarioFiltro = me.getUsuario().getIdUsuario();
+        }
+        LocalDate fechaFiltro = fecha != null ? fecha : LocalDate.now();
+
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.listarFinalizadasPorTecnico(fechaFiltro, idUsuarioFiltro, idSucursal),
+                "Listado de OT finalizadas desde tbl_venta."
+        ));
     }
 
     @GetMapping("/{id:\\d+}")
@@ -203,6 +259,16 @@ public class OtController {
         return ResponseEntity.ok(ApiResponse.of(
                 otService.obtenerDetalleCargoUsuario(id, resolveIdSucursal(token)),
                 "Detalle cargo usuario."
+        ));
+    }
+
+    @GetMapping("/{id}/registro-completo")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerRegistroCompleto(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("id") Long id) {
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.obtenerRegistroCompletoPorIdVenta(id, resolveIdSucursal(token)),
+                "Registro completo de venta obtenido correctamente."
         ));
     }
 
@@ -308,13 +374,17 @@ public class OtController {
             @RequestParam("fecha") String fecha,
             @RequestParam("nroOT") Integer nroOT,
             @RequestParam("numeroCliente") Integer numeroCliente,
+            @RequestParam(value = "incluirManual", required = false, defaultValue = "false") boolean incluirManual,
+            @RequestParam(value = "desdeAgenda", required = false, defaultValue = "false") boolean desdeAgenda,
             @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         return ResponseEntity.ok(ApiResponse.of(
                 otService.validarVentaYDetalleWb(
                         fecha,
                         nroOT,
                         numeroCliente,
-                        resolveIdSucursal(token, idSucursal)
+                        resolveIdSucursal(token, idSucursal),
+                        incluirManual,
+                        desdeAgenda
                 ),
                 "Validacion de venta y detalle ejecutada correctamente."
         ));
@@ -357,6 +427,7 @@ public class OtController {
                 "Debes enviar X-Session-Token o idSucursal para resolver la base de datos de la sucursal."
         );
     }
+
 
     private Integer extractIdSucursal(AuthMeResponse me) {
         if (me == null || me.getUsuario() == null) {

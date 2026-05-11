@@ -27,6 +27,9 @@ public class LlamadaAtencionCrearRequest {
     @Size(max = 500, message = "acuerdos no puede exceder 500 caracteres")
     private String acuerdos;
 
+    @Size(max = 200, message = "testigo no puede exceder 200 caracteres")
+    private String testigo;
+
     private LocalDateTime fechaSeguimiento;
 
     private String firmaTecnico;
@@ -87,6 +90,14 @@ public class LlamadaAtencionCrearRequest {
 
     public void setAcuerdos(String acuerdos) {
         this.acuerdos = acuerdos;
+    }
+
+    public String getTestigo() {
+        return testigo;
+    }
+
+    public void setTestigo(String testigo) {
+        this.testigo = testigo;
     }
 
     public LocalDateTime getFechaSeguimiento() {

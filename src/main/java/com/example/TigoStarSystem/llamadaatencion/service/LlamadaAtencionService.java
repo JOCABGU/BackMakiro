@@ -9,6 +9,7 @@ import com.example.TigoStarSystem.llamadaatencion.dto.LlamadaAtencionCrearReques
 import com.example.TigoStarSystem.llamadaatencion.repository.LlamadaAtencionRepository;
 import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,10 @@ import java.util.Map;
 
 @Service
 public class LlamadaAtencionService {
-    private static final String SP_TECNICOS_SIN_FILTRO = "EXEC dbo.spx_ObtenerTecnicosConformacionCuadrillaWeb";
+    private static final String[] SP_TECNICOS_SIN_FILTRO = new String[] {
+            "EXEC dbo.spx_Central_ObtenerTecnicosPorSupervisorConformacion ?, ?",
+            "EXEC dbo.spx_ObtenerListaUsuario"
+    };
     private final LlamadaAtencionRepository repository;
     private final LlamadaAtencionFirmaStorageService firmaStorageService;
     private final DbConnectionManager dbConnectionManager;
@@ -108,8 +112,10 @@ public class LlamadaAtencionService {
         String sucursalResuelta = resolveSucursalNombre(sucursal, token);
         JdbcTemplate template = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
         String filtro = trimToNull(q);
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = me != null && me.getUsuario() != null ? me.getUsuario().getIdUsuario() : null;
 
-        List<Map<String, Object>> rows = template.queryForList(SP_TECNICOS_SIN_FILTRO);
+        List<Map<String, Object>> rows = ejecutarTecnicosConFallback(template, idSupervisor, sucursalResuelta);
         List<Map<String, Object>> normalizadas = normalizarTecnicos(rows, filtro);
         int max = resolveLimit(limit);
         if (normalizadas.size() <= max) {
@@ -276,5 +282,100 @@ public class LlamadaAtencionService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private List<Map<String, Object>> ejecutarTecnicosConFallback(JdbcTemplate template, Integer idSupervisor, String sucursal) {
+        DataAccessException last = null;
+        for (String sp : SP_TECNICOS_SIN_FILTRO) {
+            try {
+                if ("EXEC dbo.spx_Central_ObtenerTecnicosPorSupervisorConformacion ?, ?".equals(sp)) {
+                    List<Map<String, Object>> rows = dbConnectionManager.connDb("central").queryForList(sp, idSupervisor, trimToNull(sucursal));
+                    if (rows != null && !rows.isEmpty()) {
+                        return enriquecerRowsConSucursal(template, rows);
+                    }
+                    continue;
+                }
+                if (sp.contains("?")) {
+                    List<Map<String, Object>> rows = template.queryForList(sp, idSupervisor);
+                    if (rows != null && !rows.isEmpty()) {
+                        return rows;
+                    }
+                    continue;
+                }
+                List<Map<String, Object>> rows = template.queryForList(sp);
+                if (rows != null && !rows.isEmpty()) {
+                    return rows;
+                }
+            } catch (DataAccessException ex) {
+                last = ex;
+                if (!isMissingStoredProcedure(ex)) {
+                    throw ex;
+                }
+            }
+        }
+        if (last != null && !isMissingStoredProcedure(last)) {
+            throw last;
+        }
+        return new ArrayList<>();
+    }
+
+    private List<Map<String, Object>> enriquecerRowsConSucursal(JdbcTemplate template, List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> mapped = new LinkedHashMap<>(row);
+            Object idObj = findValue(row, "idTecnico", "id_tecnico", "id_vendedor");
+            String id = idObj == null ? null : String.valueOf(idObj).trim();
+            if (id == null || id.isEmpty()) continue;
+            mapped.put("idTecnico", id);
+            mapped.put("id_tecnico", id);
+            String nombre = null;
+            try {
+                List<Map<String, Object>> v = template.queryForList(
+                        "SELECT TOP 1 Nombre, CodEmpleado, CuentaSF, SalesForce, Habilidad, Vehiculo " +
+                                "FROM dbo.tbl_Vendedor WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado,0)=0",
+                        Integer.parseInt(id)
+                );
+                if (!v.isEmpty()) {
+                    Map<String, Object> first = v.get(0);
+                    nombre = first.get("Nombre") == null ? null : String.valueOf(first.get("Nombre")).trim();
+                    if (first.get("CodEmpleado") != null) mapped.put("codEmpleado", first.get("CodEmpleado"));
+                    if (first.get("CuentaSF") != null) mapped.put("cuentaSf", first.get("CuentaSF"));
+                    if (first.get("SalesForce") != null) mapped.put("salesforce", first.get("SalesForce"));
+                    if (first.get("Habilidad") != null) mapped.put("habilidad", first.get("Habilidad"));
+                    if (first.get("Vehiculo") != null) mapped.put("vehiculo", first.get("Vehiculo"));
+                }
+            } catch (Exception ignored) {}
+            if (nombre == null || nombre.isEmpty()) {
+                try {
+                    List<Map<String, Object>> u = template.queryForList(
+                            "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ? AND ISNULL(E_Eliminado,0)=0",
+                            Integer.parseInt(id)
+                    );
+                    if (!u.isEmpty() && u.get(0).get("Nombre") != null) nombre = String.valueOf(u.get(0).get("Nombre")).trim();
+                } catch (Exception ignored) {}
+            }
+            mapped.put("tecnico", (nombre == null || nombre.isEmpty()) ? ("Tecnico " + id) : nombre);
+            out.add(mapped);
+        }
+        return out;
+    }
+
+    private boolean isMissingStoredProcedure(DataAccessException ex) {
+        Throwable root = ex;
+        while (root.getCause() != null) {
+            root = root.getCause();
+        }
+        if (root instanceof java.sql.SQLException) {
+            java.sql.SQLException sqlEx = (java.sql.SQLException) root;
+            if (sqlEx.getErrorCode() == 2812) {
+                return true;
+            }
+            String msg = sqlEx.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase(Locale.ROOT);
+                return lower.contains("procedimiento almacenado") && lower.contains("no se encontr");
+            }
+        }
+        return false;
     }
 }

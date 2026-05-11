@@ -15,6 +15,13 @@ BEGIN
 END
 GO
 
+IF COL_LENGTH('dbo.tbl_LlamadaAtencion', 'Testigo') IS NULL
+BEGIN
+    ALTER TABLE dbo.tbl_LlamadaAtencion
+    ADD Testigo VARCHAR(200) NULL;
+END
+GO
+
 IF EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -35,6 +42,7 @@ CREATE OR ALTER PROC dbo.spx_RegistrarLlamadaAtencion
     @Descripcion NVARCHAR(500) = NULL,
     @ComentarioColaborador NVARCHAR(500) = NULL,
     @Acuerdos NVARCHAR(500) = NULL,
+    @Testigo VARCHAR(200) = NULL,
     @FechaSeguimiento DATETIME = NULL,
     @FirmaTecnico NVARCHAR(500) = NULL,
     @FirmaTestigo NVARCHAR(500) = NULL
@@ -46,6 +54,7 @@ BEGIN
     DECLARE @CodEmpleadoNorm NVARCHAR(30) = NULLIF(LTRIM(RTRIM(@CodEmpleado)), '');
     DECLARE @IdTipoNorm NVARCHAR(16) = NULLIF(LTRIM(RTRIM(@IdTipoComunicacion)), '');
     DECLARE @MotivoNorm NVARCHAR(500) = NULLIF(LTRIM(RTRIM(@Motivo)), '');
+    DECLARE @TestigoNorm VARCHAR(200) = NULLIF(LTRIM(RTRIM(@Testigo)), '');
 
     IF @IdTecnicoNorm IS NULL
     BEGIN
@@ -65,9 +74,27 @@ BEGIN
         RETURN;
     END
 
+    IF @CodEmpleadoNorm IS NULL
+    BEGIN
+        RAISERROR('CodEmpleado es requerido.', 16, 1);
+        RETURN;
+    END
+
+    IF @IdUsuarioSupervisor IS NULL
+    BEGIN
+        RAISERROR('IdUsuarioSupervisor es requerido.', 16, 1);
+        RETURN;
+    END
+
     IF NOT EXISTS (SELECT 1 FROM dbo.tbl_TipoComunicacion WHERE Id_TipoComunicacion = @IdTipoNorm)
     BEGIN
         RAISERROR('El tipo de comunicacion seleccionado no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF @TestigoNorm IS NULL
+    BEGIN
+        RAISERROR('Testigo es requerido.', 16, 1);
         RETURN;
     END
 
@@ -100,6 +127,7 @@ BEGIN
         Descripcion,
         ComentarioColaborador,
         Acuerdos,
+        Testigo,
         FechaSeguimiento,
         FirmaTecnico,
         FirmaTestigo
@@ -115,6 +143,7 @@ BEGIN
         NULLIF(LTRIM(RTRIM(@Descripcion)), ''),
         NULLIF(LTRIM(RTRIM(@ComentarioColaborador)), ''),
         NULLIF(LTRIM(RTRIM(@Acuerdos)), ''),
+        @TestigoNorm,
         @FechaSeguimiento,
         NULLIF(LTRIM(RTRIM(@FirmaTecnico)), ''),
         NULLIF(LTRIM(RTRIM(@FirmaTestigo)), '')
@@ -150,6 +179,7 @@ BEGIN
         la.Descripcion AS descripcion,
         la.ComentarioColaborador AS comentarioColaborador,
         la.Acuerdos AS acuerdos,
+        la.Testigo AS testigo,
         la.FechaSeguimiento AS fechaSeguimiento,
         la.FirmaTecnico AS firmaTecnico,
         la.FirmaTestigo AS firmaTestigo
@@ -162,14 +192,3 @@ BEGIN
     ORDER BY la.Fecha_Registro DESC, la.Id_LlamadaAtencion DESC;
 END
 GO
-    IF @CodEmpleadoNorm IS NULL
-    BEGIN
-        RAISERROR('CodEmpleado es requerido.', 16, 1);
-        RETURN;
-    END
-
-    IF @IdUsuarioSupervisor IS NULL
-    BEGIN
-        RAISERROR('IdUsuarioSupervisor es requerido.', 16, 1);
-        RETURN;
-    END

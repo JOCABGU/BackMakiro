@@ -1,15 +1,18 @@
 package com.example.TigoStarSystem.supervision.service;
 
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
+import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearRequest;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervision.repository.SupervisionRepository;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -122,6 +125,71 @@ public class SupervisionService {
         }
     }
 
+    public List<Map<String, Object>> listarTecnicosSupervisor(String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
+        try {
+            return repository.listarTecnicosPorSupervisor(idSupervisor, sucursal);
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    public List<Map<String, Object>> listarIniciosPendientes(String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
+        try {
+            return repository.listarIniciosJornadaPendientesSupervisor(idSupervisor, sucursal);
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public List<Map<String, Object>> listarIniciosConfirmadosHoy(String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
+        try {
+            return repository.listarIniciosJornadaConfirmadosHoySupervisor(idSupervisor, sucursal);
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        int updated = repository.aprobarInicioJornada(idSupervisor, idInicio);
+        if (updated <= 0) {
+            updated = repository.aprobarInicioJornadaPorId(idInicio);
+        }
+        if (updated <= 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para aprobar.");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idInicio", idInicio);
+        out.put("aprobado", true);
+        return out;
+    }
+
+    public Map<String, Object> rechazarInicioPendiente(Integer idInicio, String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        int updated = repository.rechazarInicioJornada(idSupervisor, idInicio);
+        if (updated <= 0) {
+            updated = repository.rechazarInicioJornadaPorId(idInicio);
+        }
+        if (updated <= 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para rechazar.");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idInicio", idInicio);
+        out.put("rechazado", true);
+        return out;
+    }
+
     private Integer resolveIdUsuario(AuthMeResponse me) {
         Integer idUsuario = me != null && me.getUsuario() != null ? me.getUsuario().getIdUsuario() : null;
         if (idUsuario == null) {
@@ -142,6 +210,18 @@ public class SupervisionService {
                     "fechaDesde no puede ser mayor a fechaHasta."
             );
         }
+    }
+
+    private String resolveSucursalNombre(AuthMeResponse me) {
+        Integer idSucursal = me != null && me.getUsuario() != null ? me.getUsuario().getIdSucursal() : null;
+        if (idSucursal == null) return null;
+        List<SucursalResponse> sucursales = authService.listarSucursales();
+        for (SucursalResponse item : sucursales) {
+            if (item != null && idSucursal.equals(item.getIdSucursal())) {
+                return SucursalCanonicalizer.canonicalize(item.getSucursal());
+            }
+        }
+        return null;
     }
 
 }

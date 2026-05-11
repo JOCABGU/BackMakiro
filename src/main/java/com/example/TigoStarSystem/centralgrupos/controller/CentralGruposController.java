@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoAsignarSuperviso
 import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoAsignarTecnicoRequest;
 import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoBackupRestaurarRequest;
 import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoBackupTecnicoRequest;
+import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoCambiarSupervisorMasivoRequest;
 import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoCrearRequest;
 import com.example.TigoStarSystem.centralgrupos.dto.CentralGrupoEliminarRequest;
 import com.example.TigoStarSystem.centralgrupos.service.CentralGruposService;
@@ -169,6 +170,22 @@ public class CentralGruposController {
                         request == null ? null : request.getIdUsuarioTecnico()
                 ),
                 "Colaborador temporal actualizado."
+        ));
+    }
+
+    @PostMapping("/cambiar-supervisor-masivo")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> cambiarSupervisorMasivo(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestBody CentralGrupoCambiarSupervisorMasivoRequest request) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.cambiarSupervisorMasivo(
+                        token,
+                        request == null ? null : request.getSucursal(),
+                        request == null ? null : request.getIdSupervisorOrigen(),
+                        request == null ? null : request.getIdSupervisorDestino(),
+                        request == null ? null : request.getIdGrupos()
+                ),
+                "Supervisor reasignado en grupos."
         ));
     }
 }

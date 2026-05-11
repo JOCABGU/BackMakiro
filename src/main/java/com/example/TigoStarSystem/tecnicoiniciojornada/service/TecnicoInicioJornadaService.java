@@ -78,9 +78,6 @@ public class TecnicoInicioJornadaService {
         if (request == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Solicitud requerida.");
         }
-        if (request.getIdEncargado() == null || request.getIdEncargado() <= 0) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Encargado es requerido.");
-        }
         if (isBlank(request.getCapacitado()) || isBlank(request.getCharla()) || isBlank(request.getBotiquin())
                 || isBlank(request.getExtintor()) || request.getFechaVencimiento() == null
                 || isBlank(request.getEquipoEpp()) || isBlank(request.getEstadoEpp())
@@ -91,12 +88,47 @@ public class TecnicoInicioJornadaService {
         if (repository.existeRegistroHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario())) {
             throw new ApiException(HttpStatus.CONFLICT, "ALREADY_REGISTERED", "Ya registraste inicio de jornada hoy.");
         }
+        String sucursalResuelta = resolveSucursalNombre(request.getSucursal(), tecnico);
+        JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
+                dbConnectionManager.connDb("central"),
+                tecnicosTemplate,
+                sucursalResuelta,
+                tecnico.getIdUsuario(),
+                tecnico.getNombre()
+        );
+        if (encargadoActual == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "ENCARGADO_NO_ENCONTRADO",
+                    "No se encontro supervisor para este tecnico en conformacion diaria."
+            );
+        }
+        Integer idEncargado = toPositiveInteger(encargadoActual.get("idEncargado"));
+        if (idEncargado == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "ENCARGADO_INVALIDO",
+                    "No se pudo resolver id de supervisor para este tecnico."
+            );
+        }
+        String sucursalConformacion = valueAsString(encargadoActual.get("sucursal"));
+        String sucursalFinal = isBlank(sucursalConformacion) ? sucursalResuelta : SucursalCanonicalizer.canonicalize(sucursalConformacion);
+        Integer idSucursal = resolveSucursalId(sucursalFinal);
+        String nombreTecnicoSucursal = repository.obtenerNombreTecnicoPorId(tecnicosTemplate, tecnico.getIdUsuario());
+        if (isBlank(nombreTecnicoSucursal)) {
+            nombreTecnicoSucursal = tecnico.getNombre();
+        }
 
         List<Map<String, Object>> rows = repository.registrar(
                 tigohogarJdbcTemplate,
                 tecnico.getIdUsuario(),
                 request.getIdAuxiliar(),
-                request.getIdEncargado(),
+                idEncargado,
+                idEncargado,
+                idSucursal,
+                sucursalFinal,
+                nombreTecnicoSucursal,
                 normalizeSiNo(request.getCapacitado()),
                 normalizeSiNo(request.getCharla()),
                 normalizeSiNo(request.getBotiquin()),
@@ -124,6 +156,13 @@ public class TecnicoInicioJornadaService {
                 || isBlank(request.getDanoPersona()) || isBlank(request.getNovedadesTrabajo())
                 || isBlank(request.getUbicacionGeoRef())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Campos obligatorios de cierre incompletos.");
+        }
+        if (repository.existePendienteAprobacionHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario())) {
+            throw new ApiException(
+                    HttpStatus.FORBIDDEN,
+                    "INICIO_JORNADA_PENDIENTE_APROBACION",
+                    "No puedes cerrar jornada hasta que tu supervisor apruebe el inicio de jornada."
+            );
         }
 
         String danoMaterial = normalizeSiNo(request.getDanoMaterial());
@@ -166,12 +205,12 @@ public class TecnicoInicioJornadaService {
         AuthMeResponse me = authService.me(token);
         AuthLoginResponse usuario = me.getUsuario();
         String rol = normalize(usuario == null ? null : usuario.getRol());
-        boolean permitido = "tecnico".equals(rol) || "supervisor".equals(rol);
+        boolean permitido = "tecnico".equals(rol);
         if (!permitido) {
             throw new ApiException(
                     HttpStatus.FORBIDDEN,
                     "FORBIDDEN_INICIO_JORNADA_ONLY",
-                    "Esta funcionalidad es solo para rol Tecnico o Supervisor."
+                    "Esta funcionalidad es solo para rol Tecnico."
             );
         }
         return usuario;
@@ -202,6 +241,22 @@ public class TecnicoInicioJornadaService {
         return t.isEmpty() ? null : t;
     }
 
+    private Integer toPositiveInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            int n = ((Number) value).intValue();
+            return n > 0 ? n : null;
+        }
+        try {
+            int n = Integer.parseInt(String.valueOf(value).trim());
+            return n > 0 ? n : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     private String resolveTecnicosDb(String sucursal) {
         String normalized = normalize(sucursal);
         if (normalized.contains("sucre")) {
@@ -225,5 +280,30 @@ public class TecnicoInicioJornadaService {
             }
         }
         return null;
+    }
+
+    private Integer resolveSucursalId(String sucursalCanonica) {
+        if (isBlank(sucursalCanonica)) {
+            return null;
+        }
+        try {
+            List<SucursalResponse> sucursales = authService.listarSucursales();
+            for (SucursalResponse item : sucursales) {
+                if (item == null) continue;
+                String canon = SucursalCanonicalizer.canonicalize(item.getSucursal());
+                if (sucursalCanonica.equalsIgnoreCase(canon)) {
+                    return item.getIdSucursal();
+                }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private String valueAsString(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 }

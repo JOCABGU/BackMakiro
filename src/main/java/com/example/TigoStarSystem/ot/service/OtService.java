@@ -17,6 +17,7 @@ import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
 import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
+import com.example.TigoStarSystem.ot.repository.ListaOtRepository;
 import com.example.TigoStarSystem.ot.repository.OtRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +29,7 @@ import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.sql.SQLException;
@@ -42,19 +44,29 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 @Service
 public class OtService {
     private static final Logger logger = LoggerFactory.getLogger(OtService.class);
     private final OtRepository otRepository;
+    private final ListaOtRepository listaOtRepository;
     private final SucursalRepository sucursalRepository;
+    private final OtVentaPdfStorageService otVentaPdfStorageService;
 
     /**
      * Inicializa el servicio principal de Ordenes de Trabajo.
      */
-    public OtService(OtRepository otRepository, SucursalRepository sucursalRepository) {
+    public OtService(
+            OtRepository otRepository,
+            ListaOtRepository listaOtRepository,
+            SucursalRepository sucursalRepository,
+            OtVentaPdfStorageService otVentaPdfStorageService) {
         this.otRepository = otRepository;
+        this.listaOtRepository = listaOtRepository;
         this.sucursalRepository = sucursalRepository;
+        this.otVentaPdfStorageService = otVentaPdfStorageService;
     }
 
     /**
@@ -74,6 +86,42 @@ public class OtService {
         logger.info("Listar OT por rango inicio={}, fin={}", inicio, fin);
         List<Map<String, Object>> rows = otRepository.obtenerOrdenesPorRango(inicio, fin, idSucursal);
         logger.debug("Listar OT por rango: filas={}", rows == null ? 0 : rows.size());
+        return rows;
+    }
+
+    /**
+     * Lista ventas finalizadas (tbl_venta) para tecnico autenticado.
+     */
+    public List<Map<String, Object>> listarFinalizadasPorTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
+        LocalDate fechaFiltro = fecha == null ? LocalDate.now() : fecha;
+        if (idUsuario == null || idUsuario <= 0) {
+            logger.warn("Finalizadas: idUsuario no valido para filtrar tecnico. fecha={}", fechaFiltro);
+            return Collections.emptyList();
+        }
+
+        List<Integer> idsVendedor = otRepository.obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal);
+        List<Integer> idsVendedorFiltro = new ArrayList<>();
+        if (idsVendedor != null) {
+            for (Integer idVendedor : idsVendedor) {
+                if (idVendedor != null && idVendedor > 0 && !idsVendedorFiltro.contains(idVendedor)) {
+                    idsVendedorFiltro.add(idVendedor);
+                }
+            }
+        }
+        // Fallback: en algunas sucursales no existe mapeo en tbl_usuariotecnico, pero
+        // el Id_Vendedor de tbl_venta coincide con el idUsuario del login.
+        if (!idsVendedorFiltro.contains(idUsuario)) {
+            idsVendedorFiltro.add(idUsuario);
+        }
+
+        List<Map<String, Object>> rows = otRepository.obtenerVentasFinalizadasPorFechaYVendedores(fechaFiltro, idsVendedorFiltro, idSucursal);
+        logger.debug(
+                "Finalizadas: fecha={}, idUsuario={}, idsVendedorFiltro={}, filas={}",
+                fechaFiltro,
+                idUsuario,
+                idsVendedorFiltro,
+                rows == null ? 0 : rows.size()
+        );
         return rows;
     }
 
@@ -130,6 +178,43 @@ public class OtService {
     }
 
     /**
+     * Obtiene el registro completo de una venta (cabecera + detalles) por Id_Venta.
+     */
+    public Map<String, Object> obtenerRegistroCompletoPorIdVenta(Long idVenta, Integer idSucursal) {
+        if (idVenta == null || idVenta <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido.");
+        }
+
+        List<Map<String, Object>> cabeceraRows = otRepository.obtenerOrdenTrabajoPorIdVenta(idVenta, idSucursal);
+        if (cabeceraRows == null || cabeceraRows.isEmpty()) {
+            throw notFound("No se encontro registro en tbl_venta para idVenta: " + idVenta);
+        }
+
+        Map<String, Object> cabecera = new LinkedHashMap<>(cabeceraRows.get(0));
+        List<Map<String, Object>> estadoRows = otRepository.obtenerEstadoCierrePorIdVenta(idVenta, idSucursal);
+        if (estadoRows != null && !estadoRows.isEmpty()) {
+            Map<String, Object> estadoRow = estadoRows.get(0);
+            Integer idEstadoCierre = toInteger(findValue(estadoRow, "IdEstadoCierre", "idestadocierre", "Id_Estado", "id_estado"));
+            String estadoCierre = asString(findValue(estadoRow, "EstadoCierre", "estadocierre", "Nombre", "nombre"));
+            if (idEstadoCierre != null) {
+                cabecera.put("idEstadoCierre", idEstadoCierre);
+            }
+            if (estadoCierre != null && !estadoCierre.trim().isEmpty()) {
+                cabecera.put("estadoCierre", estadoCierre.trim());
+            } else if (idEstadoCierre != null) {
+                cabecera.put("estadoCierre", "ID " + idEstadoCierre);
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("cabecera", cabecera);
+        out.put("instalados", otRepository.obtenerDetalleInstalado(idVenta, idSucursal));
+        out.put("retirados", otRepository.obtenerDetalleRetirado(idVenta, idSucursal));
+        out.put("cargoUsuario", otRepository.obtenerDetalleCargoUsuario(idVenta, idSucursal));
+        return out;
+    }
+
+    /**
      * Registra detalle de cargo usuario para una OT.
      */
     @Transactional
@@ -178,7 +263,7 @@ public class OtService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La cantidad debe ser mayor a cero.");
             }
 
-            List<Map<String, Object>> duplicados = otRepository.obtenerCargoUsuarioExistente(serie, chipId);
+            List<Map<String, Object>> duplicados = otRepository.obtenerCargoUsuarioExistente(serie, chipId, idSucursal);
             if (!duplicados.isEmpty()) {
                 throw new ApiException(
                         HttpStatus.CONFLICT,
@@ -211,6 +296,10 @@ public class OtService {
                 );
             }
             guardados += 1;
+        }
+
+        if (guardados > 0) {
+            otRepository.actualizarFechaHoraDetalleVenta(idVenta, idSucursal);
         }
 
         return guardados;
@@ -282,16 +371,47 @@ public class OtService {
     public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
             OtRegistrarVentaRequest request,
             Integer idSucursalSesion) {
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "Debes adjuntar un archivo PDF para registrar la OT."
+        );
+    }
+
+    public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
+            OtRegistrarVentaRequest request,
+            Integer idSucursalSesion,
+            MultipartFile pdf) {
         validarRegistroVentaRequest(request);
+        if (pdf == null || pdf.isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Debes adjuntar un archivo PDF para registrar la OT."
+            );
+        }
         Integer idSucursalFinal = request.getIdSucursal() != null ? request.getIdSucursal() : idSucursalSesion;
         if (idSucursalFinal == null || idSucursalFinal <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSucursal es requerido.");
         }
+        Integer idSucursalResolucion = idSucursalSesion != null ? idSucursalSesion : idSucursalFinal;
+        Integer idVendedorResuelto = resolverIdVendedorRegistroVenta(
+                request.getIdUsuario(),
+                request.getIdVendedor(),
+                idSucursalResolucion
+        );
+        LocalDate fechaTrabajo = LocalDate.now();
+        validarBloqueosRegistroOtManual(
+                fechaTrabajo,
+                request.getIdUsuario(),
+                idVendedorResuelto,
+                idSucursalFinal
+        );
 
         try {
             Map<String, Object> result = otRepository.registrarVentaParaRegistroOtWb(
                     request.getIdUsuario(),
-                    request.getIdVendedor(),
+                    idVendedorResuelto,
                     request.getIdGrupo(),
                     request.getIdTipoServicio(),
                     request.getOrdenTrabajo(),
@@ -310,17 +430,144 @@ public class OtService {
                     idSucursalSesion
             );
 
+            Integer idVentaRegistro = toInteger(findValue(result, "Id_Venta", "id_venta", "idventa"));
+            String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(pdf, request.getOrdenTrabajo(), request.getCodigoCliente());
+            if (idVentaRegistro != null && idVentaRegistro > 0 && rutaPdf != null) {
+                try {
+                    int filas = otRepository.actualizarRutaPdfVenta(idVentaRegistro.longValue(), rutaPdf, idSucursalSesion);
+                    if (filas <= 0) {
+                        throw new ApiException(
+                                HttpStatus.INTERNAL_SERVER_ERROR,
+                                "PDF_REGISTRO_ERROR",
+                                "No se pudo registrar la ruta del PDF en tbl_Venta."
+                        );
+                    }
+                } catch (DataAccessException ex) {
+                    throw new ApiException(
+                            HttpStatus.INTERNAL_SERVER_ERROR,
+                            "PDF_REGISTRO_ERROR",
+                            "No se pudo registrar la ruta del PDF en tbl_Venta."
+                    );
+                }
+            }
+
+            if (idVentaRegistro != null && idVentaRegistro > 0) {
+                String nodo = request.getNodo() == null ? null : request.getNodo().trim().toUpperCase(Locale.ROOT);
+                String ramal = request.getRamal() == null ? null : request.getRamal().trim().toUpperCase(Locale.ROOT);
+                Integer tap = request.getTap();
+                Integer boca = request.getBoca();
+                String tapPadded = tap == null ? "" : String.format(Locale.ROOT, "%03d", tap);
+                String nodoRamalTap = "NODO " + nodo + " RAMAL " + ramal + " TAP " + tapPadded + " BOCA " + boca;
+                try {
+                    int filas = otRepository.actualizarDatosNodoRamalTapBocaVenta(
+                            idVentaRegistro.longValue(),
+                            nodo,
+                            ramal,
+                            tap,
+                            nodoRamalTap,
+                            boca,
+                            idSucursalSesion
+                    );
+                    if (filas <= 0) {
+                        throw new ApiException(
+                                HttpStatus.INTERNAL_SERVER_ERROR,
+                                "NODO_RAMAL_TAP_ERROR",
+                                "No se pudo registrar Nodo/Ramal/Tap/Boca en tbl_Venta."
+                        );
+                    }
+                } catch (DataAccessException ex) {
+                    throw new ApiException(
+                            HttpStatus.INTERNAL_SERVER_ERROR,
+                            "NODO_RAMAL_TAP_ERROR",
+                            "No se pudo registrar Nodo/Ramal/Tap/Boca en tbl_Venta."
+                    );
+                }
+            }
+
+            if (idVentaRegistro != null && idVentaRegistro > 0) {
+                String tipoTecnologia = request.getTipoTecnologia() == null ? null : request.getTipoTecnologia().trim().toUpperCase(Locale.ROOT);
+                if (tipoTecnologia != null && !tipoTecnologia.isEmpty()) {
+                    try {
+                        int filas = otRepository.actualizarTipoTecnologiaVenta(
+                                idVentaRegistro.longValue(),
+                                tipoTecnologia,
+                                idSucursalSesion
+                        );
+                        if (filas <= 0) {
+                            throw new ApiException(
+                                    HttpStatus.INTERNAL_SERVER_ERROR,
+                                    "TIPO_TECNOLOGIA_ERROR",
+                                    "No se pudo registrar TipoTecnologia en tbl_Venta."
+                            );
+                        }
+                    } catch (DataAccessException ex) {
+                        throw new ApiException(
+                                HttpStatus.INTERNAL_SERVER_ERROR,
+                                "TIPO_TECNOLOGIA_ERROR",
+                                "No se pudo registrar TipoTecnologia en tbl_Venta."
+                        );
+                    }
+                }
+            }
+
+            if (idVentaRegistro != null && idVentaRegistro > 0) {
+                try {
+                    int filas = otRepository.actualizarChecksVenta(
+                            idVentaRegistro.longValue(),
+                            request.getCheckPlantaExterna(),
+                            request.getTieneDetalle(),
+                            idSucursalSesion
+                    );
+                    if (filas <= 0) {
+                        throw new ApiException(
+                                HttpStatus.INTERNAL_SERVER_ERROR,
+                                "CHECKS_VENTA_ERROR",
+                                "No se pudo registrar CheckPlantaExterna/TieneDetalle en tbl_Venta."
+                        );
+                    }
+                } catch (DataAccessException ex) {
+                    throw new ApiException(
+                            HttpStatus.INTERNAL_SERVER_ERROR,
+                            "CHECKS_VENTA_ERROR",
+                            "No se pudo registrar CheckPlantaExterna/TieneDetalle en tbl_Venta."
+                    );
+                }
+            }
+
             return new OtRegistrarVentaResponse(
-                    toInteger(findValue(result, "Id_Venta", "id_venta", "idventa")),
+                    idVentaRegistro,
                     toInteger(findValue(result, "OrdenTrabajo", "orden_trabajo", "ot")),
                     toInteger(findValue(result, "CodigoCliente", "codigo_cliente", "cliente_nro")),
                     toInteger(findValue(result, "Id_Sucursal", "id_sucursal", "idsucursal")),
                     asString(findValue(result, "Origen", "origen")),
                     toBigDecimal(findValue(result, "Latitud", "latitud")),
-                    toBigDecimal(findValue(result, "Longitud", "longitud"))
+                    toBigDecimal(findValue(result, "Longitud", "longitud")),
+                    rutaPdf
             );
         } catch (DataAccessException ex) {
             throw traducirErrorRegistroVenta(ex, request);
+        }
+    }
+
+    private void validarBloqueosRegistroOtManual(
+            LocalDate fechaTrabajo,
+            Integer idUsuario,
+            Integer idVendedor,
+            Integer idSucursal) {
+        OtRegistroAgendaValidacionResponse bloqueoAgenda = validarRegistroAgenda(fechaTrabajo, idSucursal);
+        if (bloqueoAgenda.isBloqueado()) {
+            throw new ApiException(HttpStatus.CONFLICT, "REGISTRO_BLOQUEADO", bloqueoAgenda.getMensaje());
+        }
+
+        boolean conformacionPorUsuario = otRepository.existeConformacionCuadrillaTecnico(fechaTrabajo, idUsuario, idSucursal);
+        boolean conformacionPorVendedor = otRepository.existeConformacionCuadrillaTecnico(fechaTrabajo, idVendedor, idSucursal);
+        boolean conformacionConfirmada = conformacionPorUsuario || conformacionPorVendedor;
+        if (!conformacionConfirmada) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "CONFORMACION_CUADRILLA_REQUERIDA",
+                    "Debe existir conformacion de cuadrilla para el tecnico (id_usuario/id_vendedor) en la fecha activa antes de registrar la OT."
+            );
         }
     }
 
@@ -427,29 +674,202 @@ public class OtService {
             Integer nroOT,
             Integer numeroCliente,
             Integer idSucursal) {
+        return validarVentaYDetalleWb(fecha, nroOT, numeroCliente, idSucursal, false);
+    }
+
+    public OtValidarVentaDetalleResponse validarVentaYDetalleWb(
+            String fecha,
+            Integer nroOT,
+            Integer numeroCliente,
+            Integer idSucursal,
+            boolean incluirManual) {
+        return validarVentaYDetalleWb(fecha, nroOT, numeroCliente, idSucursal, incluirManual, false);
+    }
+
+    public OtValidarVentaDetalleResponse validarVentaYDetalleWb(
+            String fecha,
+            Integer nroOT,
+            Integer numeroCliente,
+            Integer idSucursal,
+            boolean incluirManual,
+            boolean desdeAgenda) {
         LocalDate fechaParsed = parseFechaFlexible(fecha);
         validarMayorCero(nroOT, "nroOT");
         validarMayorCero(numeroCliente, "numeroCliente");
 
         try {
+            boolean agendaMatch = incluirManual && existeRegistroEnAgenda(fechaParsed, nroOT, numeroCliente, idSucursal);
+            if (incluirManual && (desdeAgenda || agendaMatch)) {
+                try {
+                    int actualizados = otRepository.promoverOrigenManualAOtWeb(
+                            fechaParsed,
+                            nroOT,
+                            numeroCliente,
+                            idSucursal
+                    );
+                    if (actualizados > 0) {
+                        logger.info(
+                                "Ventas manuales promovidas a OT_WEB por cruce agenda. fecha={}, nroOT={}, cliente={}, filas={}, desdeAgenda={}, agendaMatch={}",
+                                fechaParsed,
+                                nroOT,
+                                numeroCliente,
+                                actualizados,
+                                desdeAgenda,
+                                agendaMatch
+                        );
+                    }
+                } catch (DataAccessException ex) {
+                    logger.warn(
+                            "No se pudo promover origen MANUAL->OT_WEB por cruce agenda (fecha={}, nroOT={}, cliente={}, desdeAgenda={}, agendaMatch={})",
+                            fechaParsed,
+                            nroOT,
+                            numeroCliente,
+                            desdeAgenda,
+                            agendaMatch,
+                            ex
+                    );
+                }
+            }
+
             Map<String, Object> row = otRepository.validarVentaYDetalleWb(
                     fechaParsed,
                     nroOT,
                     numeroCliente,
                     idSucursal
             );
+            Boolean existeVenta = toBoolean(findValue(row, "ExisteVenta", "existeventa"));
+            Integer cantidadVentas = toInteger(findValue(row, "CantidadVentas", "cantidadventas"));
+            if (existeVenta == null && cantidadVentas != null) {
+                existeVenta = cantidadVentas > 0;
+            }
+
+            Boolean tieneDetalle = toBoolean(findValue(row, "TieneDetalle", "tienedetalle"));
+            Boolean tieneDetalleEnCodigoVenta = toBoolean(findValue(row, "TieneDetalleEnCodigoVenta", "tienedetalleencodigoventa"));
+            Integer cantidadDetalles = toInteger(findValue(row, "CantidadDetalles", "cantidaddetalles"));
+            if (tieneDetalleEnCodigoVenta == null && cantidadDetalles != null) {
+                tieneDetalleEnCodigoVenta = cantidadDetalles > 0;
+            }
+
+            Boolean addMaterialOCargoUsuario = toBoolean(
+                    findValue(row,
+                            "AddMaterial_o_CargoUsuario",
+                            "addmaterial_o_cargousuario",
+                            "addMaterialOCargoUsuario",
+                            "addmaterialocargousuario")
+            );
+
+            Boolean habilitarCargarMaterial = toBoolean(
+                    findValue(row,
+                            "HabilitarCargarMaterial",
+                            "habilitarcargarmaterial",
+                            "puedeCargarMaterial",
+                            "puedecargarmaterial")
+            );
+            if (habilitarCargarMaterial == null) {
+                if (addMaterialOCargoUsuario != null) {
+                    habilitarCargarMaterial =
+                            Boolean.TRUE.equals(addMaterialOCargoUsuario) &&
+                                    !Boolean.TRUE.equals(tieneDetalleEnCodigoVenta);
+                } else {
+                    habilitarCargarMaterial =
+                            Boolean.TRUE.equals(existeVenta) &&
+                                    !Boolean.TRUE.equals(tieneDetalleEnCodigoVenta);
+                }
+            }
+
+            Map<String, Object> ventaRegistrada = otRepository.obtenerUltimaVentaPorOrdenYCliente(
+                    nroOT,
+                    numeroCliente,
+                    idSucursal
+            );
+            if (incluirManual && esVentaManual(ventaRegistrada)) {
+                Long idVentaManual = toLong(findValue(ventaRegistrada, "idVenta", "Id_Venta", "id_venta"));
+                int totalDetallesManual = otRepository.contarDetallesPorIdVenta(idVentaManual, idSucursal);
+                boolean tieneDetalleManual = totalDetallesManual > 0;
+
+                tieneDetalleEnCodigoVenta = tieneDetalleManual;
+                cantidadDetalles = totalDetallesManual;
+                addMaterialOCargoUsuario = !tieneDetalleManual;
+                habilitarCargarMaterial = !tieneDetalleManual;
+
+                if (existeVenta == null) {
+                    existeVenta = true;
+                }
+                if (cantidadVentas == null || cantidadVentas <= 0) {
+                    cantidadVentas = 1;
+                }
+            }
+
             return new OtValidarVentaDetalleResponse(
                     toLocalDate(findValue(row, "Fecha", "fecha")),
                     toInteger(findValue(row, "NroOT", "nroot")),
                     toInteger(findValue(row, "NumeroCliente", "numerocliente", "codigoCliente")),
-                    toBoolean(findValue(row, "ExisteVenta", "existeventa")),
-                    toInteger(findValue(row, "CantidadVentas", "cantidadventas")),
-                    toBoolean(findValue(row, "TieneDetalleEnCodigoVenta", "tienedetalleencodigoventa")),
-                    toInteger(findValue(row, "CantidadDetalles", "cantidaddetalles"))
+                    existeVenta,
+                    cantidadVentas,
+                    tieneDetalle,
+                    tieneDetalleEnCodigoVenta,
+                    cantidadDetalles,
+                    addMaterialOCargoUsuario,
+                    habilitarCargarMaterial
             );
         } catch (DataAccessException ex) {
             throw traducirErrorValidarVentaDetalle(ex, fecha, nroOT, numeroCliente);
         }
+    }
+
+    private boolean esVentaManual(Map<String, Object> venta) {
+        if (venta == null) {
+            return false;
+        }
+        String origen = asString(findValue(venta, "origen", "Origen"));
+        if (origen == null || origen.trim().isEmpty()) {
+            return false;
+        }
+        String normalized = normalizeText(origen).replace(" ", "");
+        return "manual".equals(normalized);
+    }
+
+    private boolean existeRegistroEnAgenda(
+            LocalDate fecha,
+            Integer nroOT,
+            Integer numeroCliente,
+            Integer idSucursal) {
+        if (fecha == null || nroOT == null || nroOT <= 0 || numeroCliente == null || numeroCliente <= 0) {
+            return false;
+        }
+        try {
+            List<Map<String, Object>> rows = listaOtRepository.listarPorFecha(fecha, null, idSucursal);
+            if (rows == null || rows.isEmpty()) {
+                return false;
+            }
+            for (Map<String, Object> row : rows) {
+                Integer ot = toInteger(findValue(row,
+                        "OT", "ot",
+                        "OrdenTrabajo", "ordenTrabajo",
+                        "NroOT", "nroOT",
+                        "Codigo", "codigo"));
+                Integer cliente = toInteger(findValue(row,
+                        "CodigoCliente", "codigoCliente",
+                        "Cliente_Nro", "cliente_nro",
+                        "NumeroCliente", "numeroCliente",
+                        "CODIGO", "Codigo", "codigo"));
+                if (ot == null || cliente == null) {
+                    continue;
+                }
+                if (ot.equals(nroOT) && cliente.equals(numeroCliente)) {
+                    return true;
+                }
+            }
+        } catch (Exception ex) {
+            logger.warn(
+                    "No se pudo verificar cruce con agenda. fecha={}, nroOT={}, cliente={}",
+                    fecha,
+                    nroOT,
+                    numeroCliente,
+                    ex
+            );
+        }
+        return false;
     }
 
     /**
@@ -458,6 +878,7 @@ public class OtService {
      */
     public OtRegistroAgendaValidacionResponse validarRegistroAgenda(LocalDate fecha, Integer idSucursal) {
         LocalDate fechaEvaluada = fecha == null ? LocalDate.now() : fecha;
+        reconciliarVentasManualConAgenda(fechaEvaluada, idSucursal);
 
         List<Map<String, Object>> cierreRows = otRepository.existeCierreAlmacenHoy(fechaEvaluada, idSucursal);
         Integer cierreCodigo = obtenerCodigoResultado(cierreRows);
@@ -537,6 +958,51 @@ public class OtService {
         );
     }
 
+    private void reconciliarVentasManualConAgenda(LocalDate fecha, Integer idSucursal) {
+        if (fecha == null) {
+            return;
+        }
+        try {
+            List<Map<String, Object>> agendaRows = listaOtRepository.listarPorFecha(fecha, null, idSucursal);
+            if (agendaRows == null || agendaRows.isEmpty()) {
+                return;
+            }
+            Set<String> agendaKeys = new HashSet<>();
+            for (Map<String, Object> row : agendaRows) {
+                Integer ordenTrabajo = toInteger(findValue(row,
+                        "OT", "ot",
+                        "OrdenTrabajo", "ordenTrabajo",
+                        "NroOT", "nroOT"));
+                Integer codigoCliente = toInteger(findValue(row,
+                        "CODIGO", "codigo", "Codigo",
+                        "CodigoCliente", "codigoCliente",
+                        "NumeroCliente", "numeroCliente",
+                        "Cliente_Nro", "cliente_nro"));
+                if (ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
+                    continue;
+                }
+                agendaKeys.add(ordenTrabajo + "|" + codigoCliente);
+            }
+            if (agendaKeys.isEmpty()) {
+                return;
+            }
+            listaOtRepository.promoverVentasManualAOtWebPorAgenda(
+                    fecha,
+                    agendaKeys,
+                    Collections.emptyList(),
+                    null,
+                    idSucursal
+            );
+        } catch (Exception ex) {
+            logger.warn(
+                    "No se pudo reconciliar ventas Manual->OT_WEB durante validarRegistroAgenda. fecha={}, sucursal={}",
+                    fecha,
+                    idSucursal,
+                    ex
+            );
+        }
+    }
+
     @Transactional
     public OtRegistrarDetalleAgendaResponse registrarDetalleAgenda(
             OtRegistrarDetalleAgendaRequest request,
@@ -582,9 +1048,31 @@ public class OtService {
                     fechaTrabajo.format(DateTimeFormatter.ISO_LOCAL_DATE),
                     ordenTrabajo,
                     codigoCliente,
-                    idSucursal
+                    idSucursal,
+                    true
             );
-            if (Boolean.TRUE.equals(ventaDetalle.getTieneDetalleEnCodigoVenta())) {
+            boolean existeVenta = Boolean.TRUE.equals(ventaDetalle.getExisteVenta())
+                    || (ventaDetalle.getCantidadVentas() != null && ventaDetalle.getCantidadVentas() > 0);
+            int cantidadDetalles = ventaDetalle.getCantidadDetalles() == null ? 0 : ventaDetalle.getCantidadDetalles();
+            if (cantidadDetalles <= 0 && Boolean.TRUE.equals(ventaDetalle.getTieneDetalleEnCodigoVenta())) {
+                cantidadDetalles = 1;
+            }
+            if (!Boolean.TRUE.equals(ventaDetalle.getHabilitarCargarMaterial())) {
+                if (cantidadDetalles > 0) {
+                    throw new ApiException(HttpStatus.CONFLICT, "DETALLE_YA_REGISTRADO", "La OT ya tiene detalle registrado en codigo venta.");
+                }
+                // Compatibilidad operativa:
+                // si la venta ya existe (OT_WEB o reconciliada desde Manual) y aun no tiene detalle,
+                // permitir la carga para evitar bloqueo de cierre por estado.
+                if (!existeVenta) {
+                    throw new ApiException(
+                            HttpStatus.CONFLICT,
+                            "ESTADO_NO_PERMITE_CARGAR_MATERIAL",
+                            "El estado actual de la OT no permite cargar material."
+                    );
+                }
+            }
+            if (cantidadDetalles > 0) {
                 throw new ApiException(HttpStatus.CONFLICT, "DETALLE_YA_REGISTRADO", "La OT ya tiene detalle registrado en codigo venta.");
             }
         }
@@ -671,6 +1159,10 @@ public class OtService {
             );
         }
 
+        if (inserted > 0) {
+            otRepository.actualizarFechaHoraDetalleVenta(idVenta, idSucursal);
+        }
+
         return new OtRegistrarDetalleAgendaResponse(idVenta, ordenTrabajo, inserted, devolucionCount);
     }
 
@@ -698,12 +1190,23 @@ public class OtService {
             List<Map<String, Object>> rows,
             Integer idUsuario,
             String rol,
-            Boolean pendiente) {
+            Boolean pendiente,
+            String tecnicoNombre,
+            Integer idSucursal) {
         if (rows == null || rows.isEmpty()) {
             return rows;
         }
         boolean filtrarPendientes = pendiente == null || pendiente;
         boolean filtrarUsuario = esTecnico(rol) && idUsuario != null;
+        String tecnicoNombreNorm = normalizeText(tecnicoNombre);
+        Set<Integer> idsVendedorTecnico = Collections.emptySet();
+        if (filtrarUsuario) {
+            try {
+                idsVendedorTecnico = new HashSet<>(otRepository.obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal));
+            } catch (DataAccessException ex) {
+                logger.warn("No se pudo resolver ids vendedor para idUsuario={}. Se aplica filtro directo por ids en fila.", idUsuario, ex);
+            }
+        }
 
         if (!filtrarPendientes && !filtrarUsuario) {
             return rows;
@@ -714,20 +1217,21 @@ public class OtService {
             if (filtrarPendientes && !esPendiente(row)) {
                 continue;
             }
-            if (filtrarUsuario && !perteneceUsuario(row, idUsuario)) {
+            if (filtrarUsuario && !perteneceUsuario(row, idUsuario, idsVendedorTecnico, tecnicoNombreNorm)) {
                 continue;
             }
             result.add(row);
         }
 
         logger.debug(
-                "Filtrado OT: total={}, result={}, pendiente={}, filtrarUsuario={}, idUsuario={}, rol={}",
+                "Filtrado OT: total={}, result={}, pendiente={}, filtrarUsuario={}, idUsuario={}, rol={}, idsVendedor={}",
                 rows.size(),
                 result.size(),
                 filtrarPendientes,
                 filtrarUsuario,
                 idUsuario,
-                rol
+                rol,
+                idsVendedorTecnico
         );
         return result;
     }
@@ -787,23 +1291,60 @@ public class OtService {
     /**
      * Verifica si la fila de OT pertenece al usuario indicado.
      */
-    private boolean perteneceUsuario(Map<String, Object> row, Integer idUsuario) {
-        Object value = findValue(row,
+    private boolean perteneceUsuario(
+            Map<String, Object> row,
+            Integer idUsuario,
+            Set<Integer> idsVendedorTecnico,
+            String tecnicoNombreNorm) {
+        if (coincideConAlguno(row, idUsuario,
                 "idusuario", "id_usuario", "iduser", "usuarioid",
                 "id_tecnico", "idtecnico", "tecnicoid",
-                "id_vendedor", "idvendedor", "id_usuario_asignado",
-                "idasignado", "id_asignado", "idpersonal", "id_personal",
-                "idempleado", "id_empleado");
-        if (value == null) {
-            logger.debug("No se encontro campo de usuario en OT. keys={}", row.keySet());
+                "id_usuario_asignado", "idasignado", "id_asignado",
+                "idpersonal", "id_personal", "idempleado", "id_empleado")) {
+            return true;
+        }
+        if (idsVendedorTecnico == null || idsVendedorTecnico.isEmpty()) {
             return false;
         }
-        Integer rowId = toInteger(value);
-        if (rowId == null) {
-            logger.debug("No se pudo convertir el idUsuario de OT. value={}", value);
+        for (Integer idVendedor : idsVendedorTecnico) {
+            if (coincideConAlguno(row, idVendedor, "id_vendedor", "idvendedor", "id_tecnico", "idtecnico")) {
+                return true;
+            }
+        }
+
+        if (tecnicoNombreNorm == null || tecnicoNombreNorm.isEmpty()) {
             return false;
         }
-        return rowId.equals(idUsuario);
+
+        String tecnicoFilaNorm = normalizeText(asString(findValue(row,
+                "tecnico", "Tecnico",
+                "tecnico_nombre", "tecnicoNombre", "nombre_tecnico", "NombreTecnico",
+                "nombreusuario", "nombre_usuario", "nombreUsuario", "NombreUsuario",
+                "vendedor", "Vendedor", "nombrevendedor", "nombre_vendedor", "NombreVendedor",
+                "usuario", "Usuario", "nombre", "Nombre"
+        )));
+        if (tecnicoFilaNorm == null || tecnicoFilaNorm.isEmpty()) {
+            return false;
+        }
+        return tecnicoFilaNorm.equals(tecnicoNombreNorm)
+                || tecnicoFilaNorm.contains(tecnicoNombreNorm)
+                || tecnicoNombreNorm.contains(tecnicoFilaNorm);
+    }
+
+    /**
+     * Verifica si alguna columna candidata coincide con el id esperado.
+     */
+    private boolean coincideConAlguno(Map<String, Object> row, Integer esperado, String... candidates) {
+        if (esperado == null) {
+            return false;
+        }
+        for (String candidate : candidates) {
+            Integer actual = toInteger(findValue(row, candidate));
+            if (actual != null && actual.equals(esperado)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -977,7 +1518,6 @@ public class OtService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El cuerpo de la solicitud es requerido.");
         }
         validarMayorCero(request.getIdUsuario(), "idUsuario");
-        validarMayorCero(request.getIdVendedor(), "idVendedor");
         validarMayorCero(request.getIdGrupo(), "idGrupo");
         validarMayorCero(request.getIdTipoServicio(), "idTipoServicio");
         validarMayorCero(request.getOrdenTrabajo(), "ordenTrabajo");
@@ -999,6 +1539,52 @@ public class OtService {
                 || request.getLongitud().compareTo(new BigDecimal("180")) > 0)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "longitud fuera de rango (-180 a 180).");
         }
+        String nodo = request.getNodo() == null ? "" : request.getNodo().trim().toUpperCase(Locale.ROOT);
+        if (!nodo.matches("^[A-Z]{3}\\d{3}$")) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "nodo debe tener formato 3 letras y 3 numeros. Ej: SCZ123.");
+        }
+        String ramal = request.getRamal() == null ? "" : request.getRamal().trim();
+        if (ramal.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "ramal es requerido.");
+        }
+        if (request.getTap() == null || request.getTap() < 0 || request.getTap() > 999) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tap debe tener de 0 a 999.");
+        }
+        if (request.getBoca() == null || request.getBoca() < 0 || request.getBoca() > 8) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "boca debe estar entre 0 y 8.");
+        }
+    }
+
+    private Integer resolverIdVendedorRegistroVenta(
+            Integer idUsuario,
+            Integer idVendedorRequest,
+            Integer idSucursal) {
+        List<Integer> idsVendedor = otRepository.obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal);
+        if (idsVendedor == null || idsVendedor.isEmpty()) {
+            Map<String, Object> details = new HashMap<>();
+            details.put("idUsuario", idUsuario);
+            details.put("idVendedorRequest", idVendedorRequest);
+            details.put("idSucursal", idSucursal);
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "No se pudo resolver id_vendedor para el id_usuario en tbl_usuariotecnico.",
+                    details
+            );
+        }
+        if (idsVendedor.size() > 1) {
+            Map<String, Object> details = new HashMap<>();
+            details.put("idUsuario", idUsuario);
+            details.put("idsVendedor", idsVendedor);
+            details.put("idSucursal", idSucursal);
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "VALIDATION_ERROR",
+                    "El id_usuario tiene mas de un id_vendedor asociado en tbl_usuariotecnico.",
+                    details
+            );
+        }
+        return idsVendedor.get(0);
     }
 
     private void validarMayorCero(Integer value, String field) {
@@ -1102,13 +1688,29 @@ public class OtService {
             if (!serie.isEmpty() && !chipId.isEmpty()) {
                 Map<String, Object> unicidad = otRepository.validarSerieChipIdUnicos(serie, chipId);
                 if (!Boolean.TRUE.equals(unicidad.get("sePuede"))) {
-                    throw new ApiException(
-                            HttpStatus.CONFLICT,
-                            "SERIE_CHIP_INVALIDOS",
-                            asString(unicidad.get("observacion")) == null
-                                    ? "La serie y el ChipID no corresponden al mismo registro."
-                                    : asString(unicidad.get("observacion"))
-                    );
+                    String observacionUnicidad = asString(unicidad.get("observacion"));
+                    boolean serieExiste = Boolean.TRUE.equals(unicidad.get("serieExiste"));
+                    boolean chipExiste = Boolean.TRUE.equals(unicidad.get("chipExiste"));
+                    boolean puedeRegistrarRetiradoSinSaldo =
+                            esMaterialRetirado(material)
+                                    && !serieExiste
+                                    && !chipExiste
+                                    && mensajeSerieInexistente(observacionUnicidad);
+                    if (puedeRegistrarRetiradoSinSaldo) {
+                        logger.debug(
+                                "Material retirado {} se registra aunque serie/chip no existan en saldo: {}",
+                                serie,
+                                observacionUnicidad
+                        );
+                    } else {
+                        throw new ApiException(
+                                HttpStatus.CONFLICT,
+                                "SERIE_CHIP_INVALIDOS",
+                                observacionUnicidad == null
+                                        ? "La serie y el ChipID no corresponden al mismo registro."
+                                        : observacionUnicidad
+                        );
+                    }
                 }
             }
 
